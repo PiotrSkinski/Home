@@ -953,8 +953,7 @@
   function renderDashboardRewardTasks() {
     const rewardItems = state.rewardClaims
       .filter((claim) => claim.status !== "done")
-      .map((claim) => ({ claim, task: getTask(claim.taskId), rewardedUser: getUser(claim.userId) }))
-      .filter((item) => item.task);
+      .map((claim) => ({ claim, task: getTask(claim.taskId), rewardedUser: getUser(claim.userId) }));
 
     if (!rewardItems.length) {
       return "";
@@ -968,12 +967,19 @@
         <div class="reward-task-list">
           ${rewardItems
             .map(({ claim, task, rewardedUser }) => {
+              const targetAttributes = task
+                ? `data-action="select-task" data-task-id="${task.id}"`
+                : `data-action="view" data-view="rewards"`;
+              const taskMeta = task
+                ? `Próg ${claim.threshold} pkt · termin ${formatHumanDate(task.dueDate)}`
+                : `Próg ${claim.threshold} pkt · sprawdź w zakładce Punkty`;
+
               return `
-                <button class="reward-task-card" type="button" data-action="select-task" data-task-id="${task.id}">
+                <button class="reward-task-card" type="button" ${targetAttributes}>
                   ${avatar(rewardedUser, "small")}
                   <span>
                     <strong>${escapeHtml(rewardedUser.name)} czeka na nagrodę</strong>
-                    <small>Próg ${claim.threshold} pkt · termin ${formatHumanDate(task.dueDate)}</small>
+                    <small>${taskMeta}</small>
                   </span>
                 </button>
               `;
