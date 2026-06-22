@@ -1,5 +1,7 @@
 (() => {
   const STORAGE_KEY = "domoweZadania.state.v1";
+  const API_STATE_ENDPOINT = "/api/state";
+  const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
 
@@ -42,9 +44,13 @@
   let activeModal = null;
   let notificationPanelOpen = false;
   let serviceWorkerRegistration = null;
+  let remoteHydrationFinished = false;
+  let remoteSaveTimer = null;
+  let lastRemotePayload = "";
 
   registerServiceWorker();
   render();
+  hydrateRemoteState();
   runReminderSweep();
   setInterval(runReminderSweep, 30000);
 
@@ -159,7 +165,7 @@
     }
 
     const nextState = createSeedState();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    persistLocalState(nextState);
     return nextState;
   }
 
@@ -220,7 +226,91 @@
   }
 
   function saveState() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistLocalState(state);
+    queueRemoteSave();
+  }
+
+  function persistLocalState(nextState) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  }
+
+  function canUseRemoteApi() {
+    return window.location.protocol === "https:";
+  }
+
+  async function hydrateRemoteState() {
+    if (!canUseRemoteApi()) {
+      remoteHydrationFinished = true;
+      return;
+    }
+
+    try {
+      const response = await fetch(API_STATE_ENDPOINT, {
+        cache: "no-store",
+        headers: { accept: "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error(`API state responded with ${response.status}`);
+      }
+
+      const payload = await response.json();
+      remoteHydrationFinished = true;
+
+      if (!payload.state) {
+        queueRemoteSave(100);
+        return;
+      }
+
+      state = normalizeState(payload.state);
+      persistLocalState(state);
+      lastRemotePayload = JSON.stringify(state);
+
+      if (!state.tasks.some((task) => task.id === selectedTaskId)) {
+        selectedTaskId = pickInitialTaskId();
+      }
+
+      render();
+    } catch (error) {
+      remoteHydrationFinished = true;
+      console.warn("Remote sync is unavailable", error);
+    }
+  }
+
+  function queueRemoteSave(delay = SYNC_DEBOUNCE_MS) {
+    if (!canUseRemoteApi() || !remoteHydrationFinished) {
+      return;
+    }
+
+    clearTimeout(remoteSaveTimer);
+    remoteSaveTimer = setTimeout(syncRemoteState, delay);
+  }
+
+  async function syncRemoteState() {
+    const payload = JSON.stringify(state);
+
+    if (payload === lastRemotePayload) {
+      return;
+    }
+
+    try {
+      const response = await fetch(API_STATE_ENDPOINT, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json"
+        },
+        body: payload
+      });
+
+      if (!response.ok) {
+        throw new Error(`API state responded with ${response.status}`);
+      }
+
+      lastRemotePayload = payload;
+    } catch (error) {
+      console.warn("Remote save failed", error);
+    }
   }
 
   function render() {
