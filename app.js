@@ -65,6 +65,7 @@
   let lastRemotePayload = "";
 
   registerServiceWorker();
+  syncRewardClaims();
   render();
   hydrateRemoteState();
   runReminderSweep();
@@ -327,11 +328,17 @@
       }
 
       state = applySession(normalizeState(payload.state));
-      persistLocalState(state);
       lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+      const rewardClaimsChanged = syncRewardClaims();
+      persistLocalState(state);
+      rememberHousehold(state);
 
       if (!state.tasks.some((task) => task.id === selectedTaskId)) {
         selectedTaskId = pickInitialTaskId();
+      }
+
+      if (rewardClaimsChanged) {
+        queueRemoteSave(100);
       }
 
       render();
@@ -2512,9 +2519,10 @@
 
   function syncRewardClaims() {
     if (!state.users.length) {
-      return;
+      return false;
     }
 
+    let changed = false;
     state.rewardClaims = Array.isArray(state.rewardClaims) ? state.rewardClaims : [];
 
     state.users.forEach((user) => {
@@ -2557,10 +2565,12 @@
           read: false,
           createdAt: new Date().toISOString()
         });
+        changed = true;
       });
     });
 
     state.notifications = state.notifications.slice(0, 40);
+    return changed;
   }
 
   function pickRewardAssignee(rewardedUserId) {
