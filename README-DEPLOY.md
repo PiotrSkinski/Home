@@ -1,6 +1,6 @@
-# Domowe zadania - Cloudflare
+# HomeJob - Cloudflare
 
-## GitHub Pages/Cloudflare Pages
+## Cloudflare Pages
 
 Ustawienia projektu Pages:
 
@@ -11,23 +11,20 @@ Ustawienia projektu Pages:
 ## Cloudflare D1
 
 1. W Cloudflare wejdz do `Storage & Databases` -> `D1 SQL Database`.
-2. Utworz baze o nazwie `domowe_zadania`.
+2. Uzyj obecnej bazy `home` albo utworz nowa baze.
 3. W zakladce `Console` wykonaj zawartosc pliku `schema.sql`.
 4. W projekcie Pages wejdz w `Settings` -> `Bindings`.
-5. Dodaj binding typu `D1 database`.
+5. Dodaj albo sprawdz binding typu `D1 database`.
 6. Nazwa zmiennej/bindingu musi byc dokladnie `DB`.
-7. Wybierz baze `domowe_zadania`.
+7. Wybierz baze.
 8. Zapisz ustawienia i zrob ponowny deploy projektu.
 
-Endpoint `/api/state` bedzie zapisywal wspolny stan aplikacji w D1.
+## Model danych
 
-## PIN-y i sekrety
+Kazdy dom jest osobnym rekordem w tabeli `households`. Aplikacja pobiera dom tylko po podaniu poprawnego PIN-u domownika.
 
-W projekcie Pages wejdz w `Settings` -> `Variables and Secrets` i dodaj sekrety:
+PIN-y nie sa juz ustawiane jako sekrety Cloudflare. Sa tworzone razem z domownikami przy zakladaniu domu i zapisywane w rekordzie danego domu.
 
-- `PIOTR_PIN` - PIN Piotra
-- `MARTA_PIN` - PIN Marty
+## Reset bazy
 
-Opcjonalnie mozna dodac tez `HOUSEHOLD_PIN` jako wspolny PIN awaryjny dla domu.
-
-Po dodaniu sekretow zrob ponowny deploy. Endpoint `/api/state` bedzie odrzucal requesty bez poprawnego PIN-u.
+Plik `schema.sql` czysci stare tabele `app_state` i `households`, a potem tworzy pusta tabele `households`. Uzyj go tylko wtedy, gdy chcesz wyczyscic dane i zaczac od zera.

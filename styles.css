@@ -704,8 +704,14 @@ button.metric {
 
 .inline-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 0.35fr) auto;
   gap: 10px;
+}
+
+.person-remove-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 14px;
 }
 
 .section-block {
@@ -1045,12 +1051,74 @@ button.metric {
   padding: 22px;
 }
 
+.onboarding-card {
+  width: min(760px, 100%);
+}
+
+.onboarding-section {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.onboarding-section h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.known-house-list,
+.member-setup-list,
+.house-create-form {
+  display: grid;
+  gap: 12px;
+}
+
+.known-house-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.7fr) minmax(96px, 0.45fr) auto;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffaf4;
+  padding: 12px;
+}
+
+.known-house-card strong,
+.known-house-card small {
+  display: block;
+}
+
+.known-house-card small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 720;
+}
+
+.member-setup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 0.35fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.split-actions {
+  justify-content: space-between;
+}
+
 .login-card .topbar-brand {
   justify-content: flex-start;
 }
 
 .login-card .household-badge {
   width: 100%;
+}
+
+.invite-panel {
+  width: fit-content;
+  min-width: 220px;
 }
 
 .login-modal {
@@ -1252,6 +1320,54 @@ button.metric {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--teal), var(--amber));
+}
+
+.reward-axis {
+  position: relative;
+  height: 24px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: #eadbca;
+}
+
+.reward-axis.compact {
+  height: 18px;
+  margin-top: 5px;
+}
+
+.reward-axis-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal), var(--amber), var(--coral));
+}
+
+.reward-axis-marker {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  min-width: 34px;
+  transform: translate(-50%, -50%);
+  place-items: center;
+  border: 2px solid #fffaf4;
+  border-radius: 999px;
+  background: #8f7a67;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1;
+  padding: 4px 6px;
+  box-shadow: 0 2px 8px rgba(82, 58, 36, 0.16);
+}
+
+.reward-axis.compact .reward-axis-marker {
+  min-width: 26px;
+  font-size: 0.58rem;
+  padding: 3px 4px;
+}
+
+.reward-axis-marker.is-reached {
+  background: var(--teal-strong);
 }
 
 .reward-grid {
@@ -1597,8 +1713,15 @@ button.metric {
   .form-grid,
   .reward-grid,
   .compact-stats,
+  .known-house-card,
+  .member-setup-row,
   .inline-form {
     grid-template-columns: 1fr;
+  }
+
+  .split-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .mini-rank-card {

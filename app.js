@@ -1,12 +1,19 @@
 (() => {
-  const STORAGE_KEY = "domoweZadania.state.v1";
-  const SESSION_KEY = "domoweZadania.session.v1";
+  const STORAGE_KEY = "homeJob.householdState.v1";
+  const SESSION_KEY = "homeJob.session.v1";
+  const KNOWN_HOUSEHOLDS_KEY = "homeJob.knownHouseholds.v1";
   const API_STATE_ENDPOINT = "/api/state";
   const API_USER_HEADER = "x-household-user";
+  const API_HOUSEHOLD_HEADER = "x-household-id";
   const API_PIN_HEADER = "x-household-pin";
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
+  const REWARD_THRESHOLDS = [
+    { points: 200, label: "Nagroda" },
+    { points: 350, label: "Duża nagroda" },
+    { points: 500, label: "Super nagroda" }
+  ];
 
   const PRIORITY = {
     high: { label: "Wysoki", points: 15, className: "high" },
@@ -37,6 +44,11 @@
   const app = document.querySelector("#app");
   const toastRoot = document.querySelector("#toast-root");
 
+  let knownHouseholds = loadKnownHouseholds();
+  let onboardingMembers = [
+    { id: uid("draft"), name: "", pin: "" },
+    { id: uid("draft"), name: "", pin: "" }
+  ];
   let session = loadSession();
   let state = applySession(loadState());
   let activeView = "dashboard";
@@ -64,105 +76,31 @@
   document.addEventListener("submit", handleSubmit);
 
   function createSeedState() {
-    const today = toISO(new Date());
-    const yesterday = toISO(addDays(new Date(), -1));
-    const tomorrow = toISO(addDays(new Date(), 1));
-    const nextWeek = toISO(addDays(new Date(), 7));
-
     return {
       household: {
-        name: "Dom na co dzień",
-        inviteCode: "DOM-2478"
+        id: null,
+        name: "HomeJob",
+        inviteCode: ""
       },
       isAuthenticated: false,
-      currentUserId: "u-ola",
-      users: [
-        { id: "u-ola", name: "Piotr", color: COLORS[0], avatar: "P" },
-        { id: "u-michal", name: "Marta", color: COLORS[1], avatar: "M" }
-      ],
-      tasks: [
-        seedTask({
-          title: "Odkurzyć salon i sypialnię",
-          room: "Salon",
-          assigneeId: "u-ola",
-          dueDate: today,
-          reminderTime: "18:30",
-          priority: "medium",
-          recurrence: { type: "biweekly", rotate: true }
-        }),
-        seedTask({
-          title: "Umyć podłogę w kuchni",
-          room: "Kuchnia",
-          assigneeId: "u-michal",
-          dueDate: today,
-          reminderTime: "19:00",
-          priority: "high",
-          recurrence: { type: "weekly", rotate: true }
-        }),
-        seedTask({
-          title: "Wynieść śmieci",
-          room: "Kuchnia",
-          assigneeId: "u-ola",
-          dueDate: yesterday,
-          reminderTime: "20:15",
-          priority: "low",
-          recurrence: { type: "none", rotate: false }
-        }),
-        seedTask({
-          title: "Podlać rośliny",
-          room: "Salon",
-          assigneeId: "u-michal",
-          dueDate: tomorrow,
-          reminderTime: "09:30",
-          priority: "low",
-          recurrence: { type: "weekly", rotate: false }
-        }),
-        seedTask({
-          title: "Przejrzeć sezonowe rzeczy w szafie",
-          room: "Sypialnia",
-          assigneeId: "u-ola",
-          dueDate: nextWeek,
-          reminderTime: "11:00",
-          priority: "medium",
-          recurrence: { type: "quarterly", rotate: true }
-        })
-      ],
+      currentUserId: null,
+      users: [],
+      tasks: [],
       pointEvents: [],
       notifications: [],
+      rewardClaims: [],
       createdAt: new Date().toISOString()
     };
-  }
-
-  function seedTask(input) {
-    const task = {
-      id: uid("task"),
-      title: input.title,
-      room: input.room,
-      assigneeId: input.assigneeId,
-      createdById: input.createdById || "u-ola",
-      dueDate: input.dueDate,
-      reminderTime: input.reminderTime,
-      assignedAt: input.assignedAt || new Date().toISOString(),
-      priority: input.priority,
-      status: "open",
-      completedAt: null,
-      completedById: null,
-      recurrence: input.recurrence || { type: "none", rotate: false },
-      points: PRIORITY[input.priority].points,
-      comments: [],
-      history: [],
-      lastNotifiedAt: null
-    };
-
-    task.history.push(historyEntry("Utworzono zadanie", task.createdById));
-    return task;
   }
 
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        return normalizeState(JSON.parse(raw));
+        const cachedState = normalizeState(JSON.parse(raw));
+        if (cachedState.household.id) {
+          return cachedState;
+        }
       }
     } catch (error) {
       console.warn("Nie udało się odczytać danych aplikacji", error);
@@ -178,8 +116,9 @@
       const raw = localStorage.getItem(SESSION_KEY);
       const data = raw ? JSON.parse(raw) : null;
 
-      if (data?.userId && data?.pin) {
+      if (data?.householdId && data?.userId && data?.pin) {
         return {
+          householdId: String(data.householdId),
           userId: String(data.userId),
           pin: String(data.pin)
         };
@@ -200,8 +139,48 @@
     localStorage.removeItem(SESSION_KEY);
   }
 
+  function loadKnownHouseholds() {
+    try {
+      const raw = localStorage.getItem(KNOWN_HOUSEHOLDS_KEY);
+      const data = raw ? JSON.parse(raw) : [];
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.warn("Nie udało się odczytać listy domów", error);
+      return [];
+    }
+  }
+
+  function saveKnownHouseholds() {
+    localStorage.setItem(KNOWN_HOUSEHOLDS_KEY, JSON.stringify(knownHouseholds));
+  }
+
+  function rememberHousehold(nextState = state) {
+    if (!nextState.household.id) {
+      return;
+    }
+
+    const entry = {
+      id: nextState.household.id,
+      name: nextState.household.name,
+      inviteCode: nextState.household.inviteCode,
+      users: nextState.users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        avatar: user.avatar,
+        color: user.color
+      })),
+      lastUserId: nextState.currentUserId || nextState.users[0]?.id || null
+    };
+
+    knownHouseholds = [entry, ...knownHouseholds.filter((item) => item.id !== entry.id)].slice(0, 12);
+    saveKnownHouseholds();
+  }
+
   function applySession(nextState) {
-    const sessionUserExists = session && nextState.users.some((user) => user.id === session.userId);
+    const sessionUserExists =
+      session &&
+      nextState.household.id === session.householdId &&
+      nextState.users.some((user) => user.id === session.userId);
     const fallbackUser = nextState.users[0];
 
     nextState.isAuthenticated = Boolean(sessionUserExists && session.pin);
@@ -215,30 +194,36 @@
   }
 
   function normalizeState(data) {
+    const fallbackState = createSeedState();
     const nextState = {
-      household: data.household || { name: "Dom", inviteCode: "DOM-0000" },
+      household: {
+        id: data.household?.id || data.id || null,
+        name: data.household?.name || data.name || "HomeJob",
+        inviteCode: data.household?.inviteCode || data.inviteCode || ""
+      },
       isAuthenticated: false,
       currentUserId: data.currentUserId,
-      users: Array.isArray(data.users) && data.users.length ? data.users : createSeedState().users,
+      users: Array.isArray(data.users) ? data.users : fallbackState.users,
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
       pointEvents: Array.isArray(data.pointEvents) ? data.pointEvents : [],
       notifications: Array.isArray(data.notifications) ? data.notifications : [],
+      rewardClaims: Array.isArray(data.rewardClaims) ? data.rewardClaims : [],
       createdAt: data.createdAt || new Date().toISOString()
     };
 
     nextState.users = nextState.users.map((user) => {
-      if (user.id === "u-ola") {
-        return { ...user, name: "Piotr", avatar: "P" };
-      }
-      if (user.id === "u-michal") {
-        return { ...user, name: "Marta", avatar: "M" };
-      }
-      return user;
+      return {
+        id: user.id || uid("user"),
+        name: user.name || "Domownik",
+        color: user.color || COLORS[0],
+        avatar: user.avatar || (user.name || "D").slice(0, 1).toUpperCase(),
+        pin: normalizePin(user.pin)
+      };
     });
 
     nextState.currentUserId = nextState.users.some((user) => user.id === nextState.currentUserId)
       ? nextState.currentUserId
-      : nextState.users[0].id;
+      : nextState.users[0]?.id || null;
 
     nextState.tasks = nextState.tasks.map((task) => {
       const recurrenceType = task.recurrence?.type === "seasonal" ? "quarterly" : task.recurrence?.type;
@@ -260,7 +245,10 @@
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
           rotate: Boolean(task.recurrence?.rotate)
         },
-        points: Number(task.points) || PRIORITY[task.priority || "medium"].points,
+        points: Number.isFinite(Number(task.points)) ? Number(task.points) : PRIORITY[task.priority || "medium"].points,
+        isRewardTask: Boolean(task.isRewardTask),
+        rewardForUserId: task.rewardForUserId || null,
+        rewardThreshold: Number(task.rewardThreshold) || null,
         comments: Array.isArray(task.comments) ? task.comments : [],
         history: Array.isArray(task.history) ? task.history : [],
         lastNotifiedAt: task.lastNotifiedAt || null
@@ -270,8 +258,14 @@
     return nextState;
   }
 
+  function normalizePin(pin) {
+    return String(pin || "").replace(/\D/g, "").slice(0, 4);
+  }
+
   function saveState() {
+    syncRewardClaims();
     persistLocalState(state);
+    rememberHousehold(state);
     queueRemoteSave();
   }
 
@@ -286,6 +280,7 @@
   function getAuthHeaders(nextSession = session) {
     return nextSession?.pin
       ? {
+          [API_HOUSEHOLD_HEADER]: nextSession.householdId,
           [API_USER_HEADER]: nextSession.userId,
           [API_PIN_HEADER]: nextSession.pin
         }
@@ -299,6 +294,7 @@
       tasks: state.tasks,
       pointEvents: state.pointEvents,
       notifications: state.notifications,
+      rewardClaims: state.rewardClaims,
       createdAt: state.createdAt
     };
   }
@@ -310,7 +306,7 @@
     }
 
     try {
-      const response = await fetch(API_STATE_ENDPOINT, {
+      const response = await fetch(`${API_STATE_ENDPOINT}?householdId=${encodeURIComponent(session.householdId)}`, {
         cache: "no-store",
         headers: {
           accept: "application/json",
@@ -362,7 +358,7 @@
     }
 
     try {
-      const response = await fetch(API_STATE_ENDPOINT, {
+      const response = await fetch(`${API_STATE_ENDPOINT}?householdId=${encodeURIComponent(state.household.id)}`, {
         method: "PUT",
         headers: {
           "content-type": "application/json",
@@ -382,13 +378,14 @@
     }
   }
 
-  async function loginWithPin(userId, pin) {
+  async function loginWithPin(householdId, userId, pin) {
     const cleanPin = String(pin || "").trim();
-    const nextSession = { userId, pin: cleanPin };
-    const user = getUser(userId);
+    const knownHousehold = knownHouseholds.find((item) => item.id === householdId);
+    const user = state.users.find((item) => item.id === userId) || knownHousehold?.users?.find((item) => item.id === userId);
+    const nextSession = { householdId, userId, pin: cleanPin };
 
-    if (!user || !cleanPin) {
-      toast("Podaj PIN", "Wybierz domownika i wpisz PIN.");
+    if (!householdId || !user || !cleanPin) {
+      toast("Podaj PIN", "Wybierz dom, domownika i wpisz PIN.");
       return;
     }
 
@@ -396,7 +393,7 @@
 
     if (canUseRemoteApi()) {
       try {
-        const response = await fetch(API_STATE_ENDPOINT, {
+        const response = await fetch(`${API_STATE_ENDPOINT}?householdId=${encodeURIComponent(householdId)}`, {
           cache: "no-store",
           headers: {
             accept: "application/json",
@@ -410,7 +407,7 @@
         }
 
         if (response.status === 503) {
-          toast("Brakuje PIN-u w Cloudflare", "Dodaj sekrety PIOTR_PIN i MARTA_PIN.");
+          toast("Dom nie jest gotowy", "Sprawdź konfigurację bazy w Cloudflare.");
           return;
         }
 
@@ -435,6 +432,7 @@
 
     state = applySession(state);
     persistLocalState(state);
+    rememberHousehold(state);
     remoteHydrationFinished = true;
     lastRemotePayload = JSON.stringify(getRemoteStatePayload());
     activeModal = null;
@@ -446,6 +444,147 @@
 
     toast("Zalogowano", user.name);
     render();
+  }
+
+  async function createHouseholdFromForm(form) {
+    const data = new FormData(form);
+    const name = String(data.get("householdName") || "").trim();
+    const members = onboardingMembers
+      .map((member) => ({
+        name: String(member.name || "").trim(),
+        pin: normalizePin(member.pin)
+      }))
+      .filter((member) => member.name && member.pin.length === 4);
+
+    if (!name) {
+      toast("Nazwij dom", "Podaj nazwę gospodarstwa.");
+      return;
+    }
+
+    if (!members.length || members.length !== onboardingMembers.filter((member) => member.name.trim()).length) {
+      toast("Uzupełnij domowników", "Każdy domownik musi mieć imię i 4-cyfrowy PIN.");
+      return;
+    }
+
+    const householdState = normalizeState({
+      household: {
+        id: uid("home"),
+        name,
+        inviteCode: generateInviteCode()
+      },
+      currentUserId: null,
+      users: members.map((member, index) => ({
+        id: uid("user"),
+        name: member.name,
+        pin: member.pin,
+        color: COLORS[index % COLORS.length],
+        avatar: member.name.slice(0, 1).toUpperCase()
+      })),
+      tasks: [],
+      pointEvents: [],
+      notifications: [],
+      rewardClaims: [],
+      createdAt: new Date().toISOString()
+    });
+
+    const firstUser = householdState.users[0];
+    const nextSession = {
+      householdId: householdState.household.id,
+      userId: firstUser.id,
+      pin: firstUser.pin
+    };
+
+    if (canUseRemoteApi()) {
+      try {
+        const response = await fetch(API_STATE_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json"
+          },
+          body: JSON.stringify({ action: "create-household", state: householdState })
+        });
+
+        if (!response.ok) {
+          throw new Error(`API state responded with ${response.status}`);
+        }
+      } catch (error) {
+        console.warn("Household creation failed", error);
+        toast("Nie udało się utworzyć domu", "Sprawdź połączenie i spróbuj ponownie.");
+        return;
+      }
+    }
+
+    session = nextSession;
+    saveSession(session);
+    state = applySession(householdState);
+    persistLocalState(state);
+    rememberHousehold(state);
+    remoteHydrationFinished = true;
+    lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+    onboardingMembers = [
+      { id: uid("draft"), name: "", pin: "" },
+      { id: uid("draft"), name: "", pin: "" }
+    ];
+    toast("Dom utworzony", state.household.name);
+    render();
+  }
+
+  async function joinHouseholdFromForm(form) {
+    const data = new FormData(form);
+    const inviteCode = String(data.get("inviteCode") || "").trim().toUpperCase();
+    const memberName = String(data.get("memberName") || "").trim();
+    const pin = normalizePin(data.get("pin"));
+
+    if (!inviteCode || !memberName || pin.length !== 4) {
+      toast("Uzupełnij dane", "Podaj kod domu, imię domownika i 4-cyfrowy PIN.");
+      return;
+    }
+
+    if (!canUseRemoteApi()) {
+      toast("Dołączanie działa online", "Ta opcja wymaga wersji z Cloudflare.");
+      return;
+    }
+
+    try {
+      const response = await fetch(API_STATE_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json"
+        },
+        body: JSON.stringify({ action: "join-household", inviteCode, memberName, pin })
+      });
+
+      if (response.status === 401 || response.status === 404) {
+        toast("Nie znaleziono dostępu", "Sprawdź kod domu, imię i PIN.");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`API state responded with ${response.status}`);
+      }
+
+      const payload = await response.json();
+      state = normalizeState(payload.state);
+      const user = state.users.find((item) => item.id === payload.userId);
+      session = {
+        householdId: state.household.id,
+        userId: user.id,
+        pin
+      };
+      saveSession(session);
+      state = applySession(state);
+      persistLocalState(state);
+      rememberHousehold(state);
+      remoteHydrationFinished = true;
+      lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+      toast("Dołączono do domu", state.household.name);
+      render();
+    } catch (error) {
+      console.warn("Joining household failed", error);
+      toast("Nie udało się dołączyć", "Sprawdź połączenie i spróbuj ponownie.");
+    }
   }
 
   function render() {
@@ -495,9 +634,6 @@
           ${navButton("rewards", "★", "Punkty")}
         </nav>
 
-        <section class="sidebar-section">
-          <button class="ghost-button" type="button" data-action="reset-demo">Wczytaj demo</button>
-        </section>
       </aside>
     `;
   }
@@ -525,14 +661,14 @@
   }
 
   function renderTopbar(currentUser) {
-    const unreadCount = state.notifications.filter((item) => !item.read).length;
+    const unreadCount = getVisibleNotifications().filter((item) => !item.read).length;
 
     return `
       <header class="topbar">
         <div class="topbar-brand">
           <div class="brand-mark" aria-hidden="true">✓</div>
           <div>
-            <h1 class="brand-title">Domowe zadania</h1>
+            <h1 class="brand-title">HomeJob</h1>
             <p class="brand-subtitle">Wspólny rytm domu</p>
           </div>
           ${renderHouseholdBadge()}
@@ -573,24 +709,140 @@
   function renderLoggedOutScreen() {
     return `
       <main class="login-page">
-        <section class="login-card">
+        <section class="login-card onboarding-card">
           <div class="topbar-brand">
             <div class="brand-mark" aria-hidden="true">✓</div>
             <div>
-              <h1 class="brand-title">Domowe zadania</h1>
-              <p class="brand-subtitle">Zaloguj się na swoje konto</p>
+              <h1 class="brand-title">HomeJob</h1>
+              <p class="brand-subtitle">Wybierz dom albo utwórz nowe gospodarstwo</p>
             </div>
           </div>
-          ${renderHouseholdBadge()}
-          ${renderLoginForm()}
+          ${renderKnownHouseholds()}
+          ${renderCreateHouseholdForm()}
+          ${renderJoinHouseholdForm()}
         </section>
       </main>
+    `;
+  }
+
+  function renderKnownHouseholds() {
+    if (!knownHouseholds.length) {
+      return "";
+    }
+
+    return `
+      <section class="onboarding-section">
+        <h2>Twoje domy</h2>
+        <div class="known-house-list">
+          ${knownHouseholds
+            .map(
+              (household) => `
+                <form class="known-house-card" data-form="known-login">
+                  <input type="hidden" name="householdId" value="${household.id}" />
+                  <div>
+                    <strong>${escapeHtml(household.name)}</strong>
+                    <small>${household.users.length} ${household.users.length === 1 ? "domownik" : "domowników"}</small>
+                  </div>
+                  <label>
+                    <span class="label">Domownik</span>
+                    <select class="select" name="userId" required>
+                      ${household.users
+                        .map(
+                          (user) => `
+                            <option value="${user.id}" ${user.id === household.lastUserId ? "selected" : ""}>
+                              ${escapeHtml(user.name)}
+                            </option>
+                          `
+                        )
+                        .join("")}
+                    </select>
+                  </label>
+                  <label>
+                    <span class="label">PIN</span>
+                    <input class="input" name="pin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required />
+                  </label>
+                  <button class="button" type="submit">Otwórz dom</button>
+                </form>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderCreateHouseholdForm() {
+    return `
+      <section class="onboarding-section">
+        <h2>Utwórz dom</h2>
+        <form class="house-create-form" data-form="create-household">
+          <label>
+            <span class="label">Nazwa domu</span>
+            <input class="input" name="householdName" placeholder="Np. Mieszkanie" maxlength="40" required />
+          </label>
+          <div class="member-setup-list">
+            ${onboardingMembers
+              .map(
+                (member, index) => `
+                  <div class="member-setup-row">
+                    <label>
+                      <span class="label">Domownik ${index + 1}</span>
+                      <input class="input" data-member-field="name" data-member-index="${index}" value="${escapeAttribute(
+                        member.name
+                      )}" placeholder="Imię" maxlength="28" required />
+                    </label>
+                    <label>
+                      <span class="label">PIN</span>
+                      <input class="input" data-member-field="pin" data-member-index="${index}" value="${escapeAttribute(
+                        member.pin
+                      )}" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="4 cyfry" required />
+                    </label>
+                    ${
+                      onboardingMembers.length > 1
+                        ? `<button class="icon-button" type="button" data-action="remove-member-row" data-member-index="${index}" aria-label="Usuń domownika">×</button>`
+                        : ""
+                    }
+                  </div>
+                `
+              )
+              .join("")}
+          </div>
+          <div class="form-actions split-actions">
+            <button class="ghost-button" type="button" data-action="add-member-row">Dodaj domownika</button>
+            <button class="button" type="submit">Stwórz dom</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  function renderJoinHouseholdForm() {
+    return `
+      <section class="onboarding-section">
+        <h2>Dołącz kodem</h2>
+        <form class="pin-login-form" data-form="join-household">
+          <label>
+            <span class="label">Kod domu</span>
+            <input class="input" name="inviteCode" placeholder="Np. HOME-8K4P" maxlength="12" required />
+          </label>
+          <label>
+            <span class="label">Imię domownika</span>
+            <input class="input" name="memberName" maxlength="28" required />
+          </label>
+          <label>
+            <span class="label">PIN</span>
+            <input class="input" name="pin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required />
+          </label>
+          <button class="button" type="submit">Dołącz</button>
+        </form>
+      </section>
     `;
   }
 
   function renderLoginForm() {
     return `
       <form class="pin-login-form" data-form="login">
+        <input type="hidden" name="householdId" value="${state.household.id || ""}" />
         <label>
           <span class="label">Domownik</span>
           <select class="select" name="userId" required>
@@ -724,6 +976,7 @@
                 <span class="rank-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <small>${row.week} pkt w 7 dni</small>
+                  ${renderRewardAxis(row.points, "compact")}
                 </span>
                 <span class="rank-points">${row.points} pkt</span>
               </div>
@@ -882,6 +1135,13 @@
           </div>
         </div>
 
+        <section class="section-block narrow-block">
+          <div class="household-badge invite-panel">
+            <strong>Kod zaproszenia</strong>
+            <span>${escapeHtml(state.household.inviteCode)}</span>
+          </div>
+        </section>
+
         <div class="people-grid">
           ${state.users
             .map((user) => {
@@ -902,6 +1162,11 @@
                     <span><strong>${overdue}</strong> zaległe</span>
                     <span><strong>${assigned.length}</strong> otwarte</span>
                   </div>
+                  ${
+                    state.users.length > 1
+                      ? `<button class="danger-button person-remove-button" type="button" data-action="remove-user" data-user-id="${user.id}">Usuń domownika</button>`
+                      : ""
+                  }
                 </article>
               `;
             })
@@ -914,6 +1179,7 @@
           </div>
           <form class="inline-form" data-form="add-user">
             <input class="input" name="name" placeholder="Imię osoby" maxlength="28" required />
+            <input class="input" name="pin" placeholder="PIN" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required />
             <button class="button" type="submit">Dodaj</button>
           </form>
         </section>
@@ -923,7 +1189,7 @@
 
   function renderRemindersView() {
     const reminders = getUpcomingReminders();
-    const notifications = state.notifications.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const notifications = getVisibleNotifications().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     return `
       <section class="view">
@@ -1035,15 +1301,51 @@
 
         <section class="section-block">
           <div class="section-head">
-            <h2>Odznaki</h2>
+            <h2>Progi nagród</h2>
           </div>
           <div class="reward-grid">
-            ${reward("★", "Dobry start", totalDone >= 1, "Pierwsze ukończone zadanie.")}
-            ${reward("◆", "Równy tydzień", completedThisWeek.length >= 5, "Pięć zadań ukończonych w ostatnie 7 dni.")}
-            ${reward("↻", "Rytm domu", state.tasks.some((task) => task.recurrence.type !== "none"), "Dodane zadanie cykliczne.")}
+            ${REWARD_THRESHOLDS.map((threshold) =>
+              reward("★", threshold.label, false, `Próg ${threshold.points} pkt. Po osiągnięciu powstaje zadanie nagrodowe dla innego domownika.`)
+            ).join("")}
           </div>
         </section>
+
+        <section class="section-block">
+          <div class="section-head">
+            <h2>Nagrody do przyznania</h2>
+          </div>
+          ${renderRewardClaims()}
+        </section>
       </section>
+    `;
+  }
+
+  function renderRewardClaims() {
+    const pendingClaims = state.rewardClaims.filter((claim) => claim.status !== "done");
+
+    if (!pendingClaims.length) {
+      return `<div class="empty-state"><strong>Brak oczekujących nagród</strong><span>Progi pojawią się tutaj po zdobyciu punktów.</span></div>`;
+    }
+
+    return `
+      <div class="history-list">
+        ${pendingClaims
+          .map((claim) => {
+            const user = getUser(claim.userId);
+            const task = getTask(claim.taskId);
+            const assignee = task ? getUser(task.assigneeId) : null;
+            return `
+              <div class="history-item">
+                ${avatar(user, "small")}
+                <div class="item-body">
+                  <p class="item-title">${escapeHtml(user.name)} czeka na nagrodę za ${claim.threshold} pkt</p>
+                  <p class="item-text">${assignee ? `Zadanie ma ${escapeHtml(assignee.name)} · ` : ""}${task ? formatHumanDate(task.dueDate) : ""}</p>
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
     `;
   }
 
@@ -1328,7 +1630,7 @@
   }
 
   function renderNotificationPanel() {
-    const notifications = state.notifications.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const notifications = getVisibleNotifications().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     return `
       <section class="notification-panel" aria-label="Powiadomienia">
@@ -1386,7 +1688,6 @@
     const rows = state.users
       .map((user) => ({ user, points: getUserPoints(user.id) }))
       .sort((a, b) => b.points - a.points);
-    const max = Math.max(1, ...rows.map((row) => row.points));
 
     return `
       <div class="leaderboard">
@@ -1397,13 +1698,33 @@
                 ${avatar(row.user)}
                 <div class="truncate">
                   <strong>${escapeHtml(row.user.name)}</strong>
-                  <div class="progress" aria-hidden="true"><span style="width:${Math.max(6, (row.points / max) * 100)}%"></span></div>
+                  ${renderRewardAxis(row.points)}
                 </div>
                 <div class="person-points">${row.points} pkt</div>
               </div>
             `
           )
           .join("")}
+      </div>
+    `;
+  }
+
+  function renderRewardAxis(points, variant = "") {
+    const axisMax = Math.max(REWARD_THRESHOLDS[REWARD_THRESHOLDS.length - 1].points, points, 1);
+    const fillWidth = Math.min(100, Math.max(3, (points / axisMax) * 100));
+
+    return `
+      <div class="reward-axis ${variant}" aria-label="Postęp do nagród">
+        <span class="reward-axis-fill" style="width:${fillWidth}%"></span>
+        ${REWARD_THRESHOLDS.map((threshold) => {
+          const left = Math.min(100, (threshold.points / axisMax) * 100);
+          const reached = points >= threshold.points ? "is-reached" : "";
+          return `
+            <span class="reward-axis-marker ${reached}" style="left:${left}%" title="${threshold.label}: ${threshold.points} pkt">
+              <span>${threshold.points}</span>
+            </span>
+          `;
+        }).join("")}
       </div>
     `;
   }
@@ -1488,6 +1809,19 @@
       return;
     }
 
+    if (action === "add-member-row") {
+      onboardingMembers.push({ id: uid("draft"), name: "", pin: "" });
+      render();
+      return;
+    }
+
+    if (action === "remove-member-row") {
+      const index = Number(actionElement.dataset.memberIndex);
+      onboardingMembers = onboardingMembers.filter((_, itemIndex) => itemIndex !== index);
+      render();
+      return;
+    }
+
     if (action === "login-as") {
       state.currentUserId = actionElement.dataset.userId;
       activeModal = "login";
@@ -1541,6 +1875,11 @@
       return;
     }
 
+    if (action === "remove-user") {
+      removeUser(actionElement.dataset.userId);
+      return;
+    }
+
     if (action === "month-prev") {
       calendarCursor = addMonths(calendarCursor, -1);
       render();
@@ -1562,7 +1901,9 @@
     if (action === "toggle-notifications") {
       notificationPanelOpen = !notificationPanelOpen;
       if (notificationPanelOpen) {
-        state.notifications = state.notifications.map((item) => ({ ...item, read: true }));
+        state.notifications = state.notifications.map((item) =>
+          isNotificationVisible(item) ? { ...item, read: true } : item
+        );
         saveState();
       }
       render();
@@ -1570,7 +1911,7 @@
     }
 
     if (action === "mark-notifications-read") {
-      state.notifications = [];
+      state.notifications = state.notifications.filter((item) => !isNotificationVisible(item));
       saveState();
       render();
       return;
@@ -1581,33 +1922,23 @@
       return;
     }
 
-    if (action === "reset-demo") {
-      state = createSeedState();
-      selectedTaskId = pickInitialTaskId();
-      selectedDate = toISO(new Date());
-      calendarCursor = startOfMonth(new Date());
-      activeView = "dashboard";
-      activeFilter = "all";
-      searchQuery = "";
-      saveState();
-      toast("Dane demo wczytane", "Możesz testować od świeżego zestawu.");
-      render();
-    }
   }
 
   function handleChange(event) {
-    if (event.target.matches("[data-action='switch-user']")) {
-      state.currentUserId = event.target.value;
-      selectedTaskId = pickInitialTaskId();
-      saveState();
-      render();
-    }
   }
 
   function handleInput(event) {
     if (event.target.matches("[data-action='search']")) {
       searchQuery = event.target.value;
       render();
+    }
+
+    if (event.target.matches("[data-member-field]")) {
+      const index = Number(event.target.dataset.memberIndex);
+      const field = event.target.dataset.memberField;
+      if (onboardingMembers[index]) {
+        onboardingMembers[index][field] = field === "pin" ? normalizePin(event.target.value) : event.target.value;
+      }
     }
   }
 
@@ -1622,7 +1953,23 @@
 
     if (formType === "login") {
       const data = new FormData(form);
-      loginWithPin(String(data.get("userId")), String(data.get("pin")));
+      loginWithPin(String(data.get("householdId")), String(data.get("userId")), String(data.get("pin")));
+      return;
+    }
+
+    if (formType === "known-login") {
+      const data = new FormData(form);
+      loginWithPin(String(data.get("householdId")), String(data.get("userId")), String(data.get("pin")));
+      return;
+    }
+
+    if (formType === "create-household") {
+      createHouseholdFromForm(form);
+      return;
+    }
+
+    if (formType === "join-household") {
+      joinHouseholdFromForm(form);
       return;
     }
 
@@ -1664,14 +2011,18 @@
     }
 
     if (formType === "add-user") {
-      const name = String(new FormData(form).get("name")).trim();
-      if (!name) {
+      const data = new FormData(form);
+      const name = String(data.get("name")).trim();
+      const pin = normalizePin(data.get("pin"));
+      if (!name || pin.length !== 4) {
+        toast("Uzupełnij domownika", "Podaj imię i 4-cyfrowy PIN.");
         return;
       }
 
       const user = {
         id: uid("user"),
         name,
+        pin,
         color: COLORS[state.users.length % COLORS.length],
         avatar: name.slice(0, 1).toUpperCase()
       };
@@ -1725,12 +2076,15 @@
     task.completedAt = new Date().toISOString();
     task.completedById = state.currentUserId;
     task.history.push(historyEntry(`Ukończono zadanie za ${task.points} pkt`, state.currentUserId));
+    completeRewardClaim(task);
     if (overdueDays > 0) {
       task.history.push(historyEntry(`Kara za zwłokę: -${overdueDays * 10} pkt`, state.currentUserId));
     }
     selectedTaskId = task.id;
 
-    if (task.recurrence.type !== "none") {
+    if (task.isRewardTask) {
+      toast("Nagroda przyznana", "Zadanie nagrodowe zostało zamknięte.");
+    } else if (task.recurrence.type !== "none") {
       const nextTask = createNextRecurringTask(task);
       state.tasks.unshift(nextTask);
       toast("Zadanie ukończone", `Dodano kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`);
@@ -1812,6 +2166,51 @@
     render();
   }
 
+  function removeUser(userId) {
+    if (state.users.length <= 1) {
+      toast("Nie można usunąć", "W domu musi zostać przynajmniej jeden domownik.");
+      return;
+    }
+
+    const removedUser = getUser(userId);
+    const remainingUsers = state.users.filter((user) => user.id !== userId);
+    const openTasks = state.tasks.filter((task) => task.status !== "done" && task.assigneeId === userId);
+
+    openTasks.forEach((task) => {
+      const nextUser = pickUserForRedistributedTask(remainingUsers);
+      task.assigneeId = nextUser.id;
+      task.assignedAt = new Date().toISOString();
+      task.history.push(historyEntry(`Przeniesiono po usunięciu: ${removedUser.name} → ${nextUser.name}`, state.currentUserId));
+    });
+
+    state.users = remainingUsers;
+    if (state.currentUserId === userId) {
+      const nextUser = remainingUsers[0];
+      state.currentUserId = nextUser.id;
+      session = { ...session, userId: nextUser.id, pin: nextUser.pin };
+      saveSession(session);
+    }
+
+    rememberHousehold(state);
+    saveState();
+    toast("Usunięto domownika", openTasks.length ? "Otwarte zadania zostały rozdzielone." : removedUser.name);
+    render();
+  }
+
+  function pickUserForRedistributedTask(users) {
+    const workload = new Map(users.map((user) => [user.id, 0]));
+
+    state.tasks.forEach((task) => {
+      if (task.status !== "done" && workload.has(task.assigneeId)) {
+        workload.set(task.assigneeId, workload.get(task.assigneeId) + task.points);
+      }
+    });
+
+    return users
+      .map((user) => ({ user, load: workload.get(user.id) || 0 }))
+      .sort((a, b) => a.load - b.load)[0].user;
+  }
+
   function createNextRecurringTask(task) {
     const dueDate = getNextDueDate(task.dueDate, task.recurrence.type);
     const assigneeId = task.recurrence.rotate ? getNextUserId(task.assigneeId) : task.assigneeId;
@@ -1864,6 +2263,7 @@
         taskId: task.id,
         title,
         body,
+        recipientUserId: task.assigneeId,
         read: false,
         createdAt: new Date().toISOString()
       });
@@ -1883,7 +2283,7 @@
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
     return state.tasks.filter((task) => {
-      if (task.status === "done" || !task.reminderTime) {
+      if (task.status === "done" || !task.reminderTime || task.assigneeId !== state.currentUserId) {
         return false;
       }
 
@@ -1987,6 +2387,14 @@
     ).sort((a, b) => `${a.dueDate} ${a.reminderTime}`.localeCompare(`${b.dueDate} ${b.reminderTime}`));
   }
 
+  function getVisibleNotifications() {
+    return state.notifications.filter((item) => isNotificationVisible(item));
+  }
+
+  function isNotificationVisible(item) {
+    return !item.recipientUserId || item.recipientUserId === state.currentUserId;
+  }
+
   function getRecentHistory() {
     return state.tasks
       .flatMap((task) =>
@@ -2064,6 +2472,111 @@
       text: event.text,
       createdAt: new Date().toISOString()
     });
+  }
+
+  function syncRewardClaims() {
+    if (!state.users.length) {
+      return;
+    }
+
+    state.rewardClaims = Array.isArray(state.rewardClaims) ? state.rewardClaims : [];
+
+    state.users.forEach((user) => {
+      const points = getUserPoints(user.id);
+
+      REWARD_THRESHOLDS.forEach((threshold) => {
+        const alreadyClaimed = state.rewardClaims.some(
+          (claim) => claim.userId === user.id && claim.threshold === threshold.points
+        );
+
+        if (points < threshold.points || alreadyClaimed) {
+          return;
+        }
+
+        const rewardAssignee = pickRewardAssignee(user.id);
+        if (!rewardAssignee) {
+          return;
+        }
+
+        const task = createRewardTask(user, rewardAssignee, threshold);
+
+        state.rewardClaims.unshift({
+          id: uid("reward"),
+          userId: user.id,
+          threshold: threshold.points,
+          label: threshold.label,
+          status: "pending",
+          taskId: task.id,
+          createdAt: new Date().toISOString(),
+          completedAt: null
+        });
+
+        state.tasks.unshift(task);
+        state.notifications.unshift({
+          id: uid("notification"),
+          taskId: task.id,
+          title: "Nagroda do przyznania",
+          body: `${user.name} zebrał(a) ${threshold.points} pkt i czeka na nagrodę.`,
+          recipientUserId: rewardAssignee.id,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+      });
+    });
+
+    state.notifications = state.notifications.slice(0, 40);
+  }
+
+  function pickRewardAssignee(rewardedUserId) {
+    return state.users
+      .filter((user) => user.id !== rewardedUserId)
+      .map((user) => ({ user, points: getUserPoints(user.id) }))
+      .sort((a, b) => a.points - b.points)[0]?.user;
+  }
+
+  function createRewardTask(rewardedUser, assignee, threshold) {
+    const dueDate = toISO(addDays(new Date(), 7));
+
+    return {
+      id: uid("task"),
+      title: `Przyznaj nagrodę dla ${rewardedUser.name}`,
+      room: "Nagrody",
+      assigneeId: assignee.id,
+      createdById: rewardedUser.id,
+      dueDate,
+      reminderTime: "09:00",
+      assignedAt: new Date().toISOString(),
+      priority: "medium",
+      status: "open",
+      completedAt: null,
+      completedById: null,
+      recurrence: { type: "none", rotate: false },
+      points: 0,
+      isRewardTask: true,
+      rewardForUserId: rewardedUser.id,
+      rewardThreshold: threshold.points,
+      comments: [],
+      history: [historyEntry(`${rewardedUser.name} osiągnął/osiągnęła próg ${threshold.points} pkt`, rewardedUser.id)],
+      lastNotifiedAt: null
+    };
+  }
+
+  function completeRewardClaim(task) {
+    if (!task.isRewardTask || !task.rewardForUserId || !task.rewardThreshold) {
+      return;
+    }
+
+    const claim = state.rewardClaims.find(
+      (item) =>
+        item.userId === task.rewardForUserId &&
+        item.threshold === task.rewardThreshold &&
+        item.taskId === task.id
+    );
+
+    if (claim) {
+      claim.status = "done";
+      claim.completedAt = new Date().toISOString();
+    }
   }
 
   function getCalendarDays(cursor) {
@@ -2251,6 +2764,15 @@
 
   function uid(prefix) {
     return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
+  }
+
+  function generateInviteCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code = "HOME-";
+    for (let index = 0; index < 4; index += 1) {
+      code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return code;
   }
 
   function capitalize(value) {
