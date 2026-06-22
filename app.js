@@ -59,6 +59,7 @@
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
   let notificationPanelOpen = false;
+  let moreMenuOpen = false;
   let serviceWorkerRegistration = null;
   let remoteHydrationFinished = false;
   let remoteSaveTimer = null;
@@ -631,28 +632,42 @@
           <button class="ghost-button" type="button" data-action="logout">Wyloguj</button>
         </section>
 
-        <nav class="nav" aria-label="Nawigacja">
-          ${navButton("dashboard", "⌂", "Dashboard")}
-          ${navButton("tasks", "☰", "Lista")}
-          ${navButton("calendar", "◱", "Kalendarz")}
-          ${navButton("team", "◎", "Domownicy")}
-          ${navButton("reminders", "◉", "Przypomnienia")}
-          ${navButton("activity", "↺", "Aktywność")}
-          ${navButton("rewards", "★", "Punkty")}
+        <nav class="nav ${moreMenuOpen ? "is-more-open" : ""}" aria-label="Nawigacja">
+          ${navButton("dashboard", "⌂", "Dashboard", "nav-primary")}
+          ${navButton("tasks", "☰", "Lista", "nav-primary")}
+          ${navButton("calendar", "◱", "Kalendarz", "nav-primary")}
+          ${navButton("team", "◎", "Domownicy", "nav-overflow")}
+          ${navButton("reminders", "◉", "Przypomnienia", "nav-overflow")}
+          ${navButton("activity", "↻", "Aktywność", "nav-overflow")}
+          ${navButton("rewards", "★", "Punkty", "nav-overflow")}
+          <button class="nav-button nav-more-button ${isMoreViewActive() ? "is-active" : ""}" type="button" data-action="toggle-more-menu" aria-expanded="${moreMenuOpen ? "true" : "false"}">
+            <span class="nav-icon" aria-hidden="true">⋯</span>
+            <span>Więcej</span>
+          </button>
+          <div class="more-menu-panel">
+            ${navButton("team", "◎", "Domownicy", "more-menu-item")}
+            ${navButton("reminders", "◉", "Przypomnienia", "more-menu-item")}
+            ${navButton("activity", "↻", "Aktywność", "more-menu-item")}
+            ${navButton("rewards", "★", "Punkty", "more-menu-item")}
+          </div>
         </nav>
 
       </aside>
     `;
   }
 
-  function navButton(id, icon, label) {
+  function navButton(id, icon, label, className = "") {
     const isActive = activeView === id || (id === "tasks" && activeView === "task-detail");
     return `
-      <button class="nav-button ${isActive ? "is-active" : ""}" type="button" data-action="view" data-view="${id}">
+      <button class="nav-button ${className} ${isActive ? "is-active" : ""}" type="button" data-action="view" data-view="${id}">
         <span class="nav-icon" aria-hidden="true">${icon}</span>
         <span>${label}</span>
       </button>
     `;
+  }
+
+  function isMoreViewActive() {
+    return ["team", "reminders", "activity", "rewards"].includes(activeView);
   }
 
   function renderPersonRow(user) {
@@ -1811,8 +1826,16 @@
 
     const action = actionElement.dataset.action;
 
+    if (action === "toggle-more-menu") {
+      moreMenuOpen = !moreMenuOpen;
+      notificationPanelOpen = false;
+      render();
+      return;
+    }
+
     if (action === "view") {
       activeView = actionElement.dataset.view;
+      moreMenuOpen = false;
       notificationPanelOpen = false;
       render();
       return;
@@ -1821,6 +1844,7 @@
     if (action === "filter" || action === "quick-filter") {
       activeView = "tasks";
       activeFilter = actionElement.dataset.filter;
+      moreMenuOpen = false;
       render();
       return;
     }
@@ -1833,12 +1857,14 @@
         activeView = "tasks";
         activeFilter = target;
       }
+      moreMenuOpen = false;
       render();
       return;
     }
 
     if (action === "back-to-tasks") {
       activeView = "tasks";
+      moreMenuOpen = false;
       render();
       return;
     }
@@ -1846,6 +1872,7 @@
     if (action === "open-task-modal") {
       activeModal = "task";
       notificationPanelOpen = false;
+      moreMenuOpen = false;
       render();
       queueMicrotask(() => document.querySelector("[name='title']")?.focus());
       return;
@@ -1854,6 +1881,7 @@
     if (action === "open-login-modal") {
       activeModal = "login";
       notificationPanelOpen = false;
+      moreMenuOpen = false;
       render();
       return;
     }
@@ -1949,6 +1977,7 @@
 
     if (action === "toggle-notifications") {
       notificationPanelOpen = !notificationPanelOpen;
+      moreMenuOpen = false;
       if (notificationPanelOpen) {
         state.notifications = state.notifications.map((item) =>
           isNotificationVisible(item) ? { ...item, read: true } : item
