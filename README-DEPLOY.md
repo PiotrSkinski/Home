@@ -20,3 +20,14 @@ Ustawienia projektu Pages:
 8. Zapisz ustawienia i zrob ponowny deploy projektu.
 
 Endpoint `/api/state` bedzie zapisywal wspolny stan aplikacji w D1.
+
+## PIN-y i sekrety
+
+W projekcie Pages wejdz w `Settings` -> `Variables and Secrets` i dodaj sekrety:
+
+- `PIOTR_PIN` - PIN Piotra
+- `MARTA_PIN` - PIN Marty
+
+Opcjonalnie mozna dodac tez `HOUSEHOLD_PIN` jako wspolny PIN awaryjny dla domu.
+
+Po dodaniu sekretow zrob ponowny deploy. Endpoint `/api/state` bedzie odrzucal requesty bez poprawnego PIN-u.

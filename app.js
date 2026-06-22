@@ -1,6 +1,9 @@
 (() => {
   const STORAGE_KEY = "domoweZadania.state.v1";
+  const SESSION_KEY = "domoweZadania.session.v1";
   const API_STATE_ENDPOINT = "/api/state";
+  const API_USER_HEADER = "x-household-user";
+  const API_PIN_HEADER = "x-household-pin";
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
@@ -34,7 +37,8 @@
   const app = document.querySelector("#app");
   const toastRoot = document.querySelector("#toast-root");
 
-  let state = loadState();
+  let session = loadSession();
+  let state = applySession(loadState());
   let activeView = "dashboard";
   let activeFilter = "all";
   let searchQuery = "";
@@ -70,7 +74,7 @@
         name: "Dom na co dzień",
         inviteCode: "DOM-2478"
       },
-      isAuthenticated: true,
+      isAuthenticated: false,
       currentUserId: "u-ola",
       users: [
         { id: "u-ola", name: "Piotr", color: COLORS[0], avatar: "P" },
@@ -169,10 +173,51 @@
     return nextState;
   }
 
+  function loadSession() {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      const data = raw ? JSON.parse(raw) : null;
+
+      if (data?.userId && data?.pin) {
+        return {
+          userId: String(data.userId),
+          pin: String(data.pin)
+        };
+      }
+    } catch (error) {
+      console.warn("Nie udalo sie odczytac sesji", error);
+    }
+
+    return null;
+  }
+
+  function saveSession(nextSession) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
+  }
+
+  function clearSession() {
+    session = null;
+    localStorage.removeItem(SESSION_KEY);
+  }
+
+  function applySession(nextState) {
+    const sessionUserExists = session && nextState.users.some((user) => user.id === session.userId);
+    const fallbackUser = nextState.users[0];
+
+    nextState.isAuthenticated = Boolean(sessionUserExists && session.pin);
+    nextState.currentUserId = nextState.isAuthenticated
+      ? session.userId
+      : nextState.users.some((user) => user.id === nextState.currentUserId)
+        ? nextState.currentUserId
+        : fallbackUser?.id;
+
+    return nextState;
+  }
+
   function normalizeState(data) {
     const nextState = {
       household: data.household || { name: "Dom", inviteCode: "DOM-0000" },
-      isAuthenticated: data.isAuthenticated !== false,
+      isAuthenticated: false,
       currentUserId: data.currentUserId,
       users: Array.isArray(data.users) && data.users.length ? data.users : createSeedState().users,
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
@@ -238,8 +283,28 @@
     return window.location.protocol === "https:";
   }
 
+  function getAuthHeaders(nextSession = session) {
+    return nextSession?.pin
+      ? {
+          [API_USER_HEADER]: nextSession.userId,
+          [API_PIN_HEADER]: nextSession.pin
+        }
+      : {};
+  }
+
+  function getRemoteStatePayload() {
+    return {
+      household: state.household,
+      users: state.users,
+      tasks: state.tasks,
+      pointEvents: state.pointEvents,
+      notifications: state.notifications,
+      createdAt: state.createdAt
+    };
+  }
+
   async function hydrateRemoteState() {
-    if (!canUseRemoteApi()) {
+    if (!canUseRemoteApi() || !session?.pin) {
       remoteHydrationFinished = true;
       return;
     }
@@ -247,7 +312,10 @@
     try {
       const response = await fetch(API_STATE_ENDPOINT, {
         cache: "no-store",
-        headers: { accept: "application/json" }
+        headers: {
+          accept: "application/json",
+          ...getAuthHeaders()
+        }
       });
 
       if (!response.ok) {
@@ -262,9 +330,9 @@
         return;
       }
 
-      state = normalizeState(payload.state);
+      state = applySession(normalizeState(payload.state));
       persistLocalState(state);
-      lastRemotePayload = JSON.stringify(state);
+      lastRemotePayload = JSON.stringify(getRemoteStatePayload());
 
       if (!state.tasks.some((task) => task.id === selectedTaskId)) {
         selectedTaskId = pickInitialTaskId();
@@ -278,7 +346,7 @@
   }
 
   function queueRemoteSave(delay = SYNC_DEBOUNCE_MS) {
-    if (!canUseRemoteApi() || !remoteHydrationFinished) {
+    if (!canUseRemoteApi() || !remoteHydrationFinished || !session?.pin) {
       return;
     }
 
@@ -287,7 +355,7 @@
   }
 
   async function syncRemoteState() {
-    const payload = JSON.stringify(state);
+    const payload = JSON.stringify(getRemoteStatePayload());
 
     if (payload === lastRemotePayload) {
       return;
@@ -298,7 +366,8 @@
         method: "PUT",
         headers: {
           "content-type": "application/json",
-          accept: "application/json"
+          accept: "application/json",
+          ...getAuthHeaders()
         },
         body: payload
       });
@@ -311,6 +380,72 @@
     } catch (error) {
       console.warn("Remote save failed", error);
     }
+  }
+
+  async function loginWithPin(userId, pin) {
+    const cleanPin = String(pin || "").trim();
+    const nextSession = { userId, pin: cleanPin };
+    const user = getUser(userId);
+
+    if (!user || !cleanPin) {
+      toast("Podaj PIN", "Wybierz domownika i wpisz PIN.");
+      return;
+    }
+
+    let remotePayload = null;
+
+    if (canUseRemoteApi()) {
+      try {
+        const response = await fetch(API_STATE_ENDPOINT, {
+          cache: "no-store",
+          headers: {
+            accept: "application/json",
+            ...getAuthHeaders(nextSession)
+          }
+        });
+
+        if (response.status === 401) {
+          toast("Nieprawidłowy PIN", "Sprawdź PIN i spróbuj ponownie.");
+          return;
+        }
+
+        if (response.status === 503) {
+          toast("Brakuje PIN-u w Cloudflare", "Dodaj sekrety PIOTR_PIN i MARTA_PIN.");
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`API state responded with ${response.status}`);
+        }
+
+        remotePayload = await response.json();
+      } catch (error) {
+        console.warn("Login failed", error);
+        toast("Nie udało się zalogować", "Sprawdź połączenie i spróbuj ponownie.");
+        return;
+      }
+    }
+
+    session = nextSession;
+    saveSession(session);
+
+    if (remotePayload?.state) {
+      state = normalizeState(remotePayload.state);
+    }
+
+    state = applySession(state);
+    persistLocalState(state);
+    remoteHydrationFinished = true;
+    lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+    activeModal = null;
+    selectedTaskId = pickInitialTaskId();
+
+    if (!remotePayload?.state) {
+      queueRemoteSave(100);
+    }
+
+    toast("Zalogowano", user.name);
+    render();
   }
 
   function render() {
@@ -447,23 +582,35 @@
             </div>
           </div>
           ${renderHouseholdBadge()}
-          <div class="login-options">
+          ${renderLoginForm()}
+        </section>
+      </main>
+    `;
+  }
+
+  function renderLoginForm() {
+    return `
+      <form class="pin-login-form" data-form="login">
+        <label>
+          <span class="label">Domownik</span>
+          <select class="select" name="userId" required>
             ${state.users
               .map(
                 (user) => `
-                  <button class="login-option" type="button" data-action="login-as" data-user-id="${user.id}">
-                    ${avatar(user)}
-                    <span>
-                      <strong>${escapeHtml(user.name)}</strong>
-                      <small>${getUserPoints(user.id)} pkt łącznie</small>
-                    </span>
-                  </button>
+                  <option value="${user.id}" ${user.id === state.currentUserId ? "selected" : ""}>
+                    ${escapeHtml(user.name)} - ${getUserPoints(user.id)} pkt
+                  </option>
                 `
               )
               .join("")}
-          </div>
-        </section>
-      </main>
+          </select>
+        </label>
+        <label>
+          <span class="label">PIN</span>
+          <input class="input" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required />
+        </label>
+        <button class="button" type="submit">Zaloguj</button>
+      </form>
     `;
   }
 
@@ -475,21 +622,7 @@
             <h2 class="modal-title" id="login-modal-title">Wybierz konto</h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
-          <div class="login-options">
-            ${state.users
-              .map(
-                (user) => `
-                  <button class="login-option" type="button" data-action="login-as" data-user-id="${user.id}">
-                    ${avatar(user)}
-                    <span>
-                      <strong>${escapeHtml(user.name)}</strong>
-                      <small>${getUserPoints(user.id)} pkt łącznie</small>
-                    </span>
-                  </button>
-                `
-              )
-              .join("")}
-          </div>
+          ${renderLoginForm()}
         </section>
       </div>
     `;
@@ -1357,19 +1490,17 @@
 
     if (action === "login-as") {
       state.currentUserId = actionElement.dataset.userId;
-      state.isAuthenticated = true;
-      activeModal = null;
-      selectedTaskId = pickInitialTaskId();
-      saveState();
+      activeModal = "login";
       render();
       return;
     }
 
     if (action === "logout") {
+      clearSession();
       state.isAuthenticated = false;
       activeModal = null;
       notificationPanelOpen = false;
-      saveState();
+      persistLocalState(state);
       render();
       return;
     }
@@ -1488,6 +1619,12 @@
 
     event.preventDefault();
     const formType = form.dataset.form;
+
+    if (formType === "login") {
+      const data = new FormData(form);
+      loginWithPin(String(data.get("userId")), String(data.get("pin")));
+      return;
+    }
 
     if (formType === "task") {
       const data = new FormData(form);

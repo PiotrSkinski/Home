@@ -1057,6 +1057,16 @@ button.metric {
   width: min(520px, 100%);
 }
 
+.pin-login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.pin-login-form .button {
+  width: 100%;
+  justify-content: center;
+}
+
 .login-options {
   display: grid;
   gap: 10px;
