@@ -1,10 +1,10 @@
-const CACHE_NAME = "homejob-v16";
+const CACHE_NAME = "homejob-v17";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=16",
-  "./app.js?v=16",
-  "./manifest.webmanifest?v=16",
+  "./styles.css?v=17",
+  "./app.js?v=17",
+  "./manifest.webmanifest?v=17",
   "./icon.svg"
 ];
 

@@ -954,7 +954,7 @@
     const rewardItems = state.rewardClaims
       .filter((claim) => claim.status !== "done")
       .map((claim) => ({ claim, task: getTask(claim.taskId), rewardedUser: getUser(claim.userId) }))
-      .filter((item) => item.task && item.task.status !== "done" && item.task.assigneeId === state.currentUserId);
+      .filter((item) => item.task);
 
     if (!rewardItems.length) {
       return "";
