@@ -951,11 +951,12 @@
   }
 
   function renderDashboardRewardTasks() {
-    const rewardTasks = state.tasks.filter(
-      (task) => task.isRewardTask && task.status !== "done" && task.assigneeId === state.currentUserId
-    );
+    const rewardItems = state.rewardClaims
+      .filter((claim) => claim.status !== "done")
+      .map((claim) => ({ claim, task: getTask(claim.taskId), rewardedUser: getUser(claim.userId) }))
+      .filter((item) => item.task && item.task.status !== "done" && item.task.assigneeId === state.currentUserId);
 
-    if (!rewardTasks.length) {
+    if (!rewardItems.length) {
       return "";
     }
 
@@ -965,15 +966,14 @@
           <h2>Nagrody do przyznania</h2>
         </div>
         <div class="reward-task-list">
-          ${rewardTasks
-            .map((task) => {
-              const rewardedUser = getUser(task.rewardForUserId);
+          ${rewardItems
+            .map(({ claim, task, rewardedUser }) => {
               return `
                 <button class="reward-task-card" type="button" data-action="select-task" data-task-id="${task.id}">
                   ${avatar(rewardedUser, "small")}
                   <span>
                     <strong>${escapeHtml(rewardedUser.name)} czeka na nagrodę</strong>
-                    <small>Próg ${task.rewardThreshold} pkt · termin ${formatHumanDate(task.dueDate)}</small>
+                    <small>Próg ${claim.threshold} pkt · termin ${formatHumanDate(task.dueDate)}</small>
                   </span>
                 </button>
               `;
