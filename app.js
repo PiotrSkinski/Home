@@ -921,6 +921,8 @@
           ${renderMiniLeaderboard()}
         </section>
 
+        ${renderDashboardRewardTasks()}
+
         <div class="single-column">
           <section class="section-block">
             <div class="section-head">
@@ -936,6 +938,40 @@
           ${metricLink(mineOverdue.length, "Moje zaległe", "mine-overdue")}
           ${metricLink(homeToday.length, "Dom dziś", "today")}
           ${metricLink(weeklyPoints, "Punkty w 7 dni", "rewards")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderDashboardRewardTasks() {
+    const rewardTasks = state.tasks.filter(
+      (task) => task.isRewardTask && task.status !== "done" && task.assigneeId === state.currentUserId
+    );
+
+    if (!rewardTasks.length) {
+      return "";
+    }
+
+    return `
+      <section class="section-block reward-dashboard-section">
+        <div class="section-head">
+          <h2>Nagrody do przyznania</h2>
+        </div>
+        <div class="reward-task-list">
+          ${rewardTasks
+            .map((task) => {
+              const rewardedUser = getUser(task.rewardForUserId);
+              return `
+                <button class="reward-task-card" type="button" data-action="select-task" data-task-id="${task.id}">
+                  ${avatar(rewardedUser, "small")}
+                  <span>
+                    <strong>${escapeHtml(rewardedUser.name)} czeka na nagrodę</strong>
+                    <small>Próg ${task.rewardThreshold} pkt · termin ${formatHumanDate(task.dueDate)}</small>
+                  </span>
+                </button>
+              `;
+            })
+            .join("")}
         </div>
       </section>
     `;
@@ -2083,7 +2119,7 @@
     selectedTaskId = task.id;
 
     if (task.isRewardTask) {
-      toast("Nagroda przyznana", "Zadanie nagrodowe zostało zamknięte.");
+      toast("Nagroda przyznana", "Zdobyto symboliczne 5 pkt.");
     } else if (task.recurrence.type !== "none") {
       const nextTask = createNextRecurringTask(task);
       state.tasks.unshift(nextTask);
@@ -2551,7 +2587,7 @@
       completedAt: null,
       completedById: null,
       recurrence: { type: "none", rotate: false },
-      points: 0,
+      points: 5,
       isRewardTask: true,
       rewardForUserId: rewardedUser.id,
       rewardThreshold: threshold.points,

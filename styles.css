@@ -543,6 +543,50 @@ button.metric {
   gap: 10px;
 }
 
+.reward-dashboard-section {
+  margin-top: -4px;
+}
+
+.reward-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.reward-task-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid rgba(184, 95, 69, 0.28);
+  border-radius: var(--radius);
+  background: #fff3e2;
+  color: var(--ink);
+  padding: 12px;
+  text-align: left;
+}
+
+.reward-task-card:hover {
+  border-color: rgba(184, 95, 69, 0.48);
+  background: #ffe9cc;
+}
+
+.reward-task-card strong,
+.reward-task-card small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reward-task-card small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 720;
+}
+
 .mini-rank-card {
   display: grid;
   grid-template-columns: 28px auto minmax(0, 1fr) auto;
