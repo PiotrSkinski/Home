@@ -1,11 +1,18 @@
 const STATE_KEY = "default";
+const API_USER_HEADER = "x-household-user";
+const API_PIN_HEADER = "x-household-pin";
 
 const responseHeaders = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store"
 };
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ request, env }) {
+  const auth = authorize(request, env);
+  if (!auth.ok) {
+    return json({ error: auth.error }, auth.status);
+  }
+
   const db = getDatabase(env);
   await ensureSchema(db);
 
@@ -33,6 +40,11 @@ export function onRequestOptions() {
 }
 
 async function saveState({ request, env }) {
+  const auth = authorize(request, env);
+  if (!auth.ok) {
+    return json({ error: auth.error }, auth.status);
+  }
+
   const db = getDatabase(env);
   const body = await request.json();
   const nextState = body?.state || body;
@@ -77,6 +89,52 @@ function getDatabase(env) {
   }
 
   return env.DB;
+}
+
+function authorize(request, env) {
+  const userId = request.headers.get(API_USER_HEADER);
+  const pin = request.headers.get(API_PIN_HEADER)?.trim();
+  const expectedPins = getExpectedPins(userId, env);
+
+  if (!expectedPins.length) {
+    return {
+      ok: false,
+      status: 503,
+      error: "Brakuje skonfigurowanych PIN-ow w Cloudflare."
+    };
+  }
+
+  if (pin && expectedPins.includes(pin)) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    status: 401,
+    error: "Nieprawidlowy PIN."
+  };
+}
+
+function getExpectedPins(userId, env) {
+  const pins = [];
+
+  addPin(pins, env.HOUSEHOLD_PIN);
+
+  if (userId === "u-ola") {
+    addPin(pins, env.PIOTR_PIN);
+  }
+
+  if (userId === "u-michal") {
+    addPin(pins, env.MARTA_PIN);
+  }
+
+  return pins;
+}
+
+function addPin(pins, pin) {
+  if (typeof pin === "string" && pin.trim()) {
+    pins.push(pin.trim());
+  }
 }
 
 function json(body, status = 200) {
