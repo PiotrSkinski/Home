@@ -1,17 +1,7 @@
-{
-  "name": "Domowe zadania",
-  "short_name": "Zadania",
-  "description": "Wspólna organizacja zadań domowych, przypomnień i punktów.",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#f6f7fb",
-  "theme_color": "#1d766f",
-  "icons": [
-    {
-      "src": "./icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
-  ]
-}
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Domowe zadania">
+  <rect width="128" height="128" rx="30" fill="#1d766f"/>
+  <path d="M27 62 64 31l37 31v40a7 7 0 0 1-7 7H34a7 7 0 0 1-7-7V62Z" fill="#f7efe5"/>
+  <path d="M48 71h33v10H48z" fill="#ef6f5e"/>
+  <path d="M48 88h24v10H48z" fill="#f0b84d"/>
+  <path d="m50 58 8 8 20-22" fill="none" stroke="#1d766f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1d766f" />
+    <title>Domowe zadania</title>
+    <link rel="manifest" href="./manifest.webmanifest?v=11" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
+  </head>
+  <body>
+    <div id="app" aria-live="polite"></div>
+    <div id="toast-root" class="toast-root" aria-live="assertive"></div>
+    <script src="./app.js?v=11" defer></script>
+  </body>
+</html>
