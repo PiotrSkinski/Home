@@ -719,12 +719,12 @@
 
   function renderHouseholdBadge() {
     return `
-      <div class="household-badge">
+      <button class="household-badge household-switch-button" type="button" data-action="change-household" aria-label="Zmień gospodarstwo">
         <strong>${escapeHtml(state.household.name)}</strong>
         <span>${state.users.length} ${state.users.length === 1 ? "domownik" : "domowników"} · ${escapeHtml(
           state.household.inviteCode
         )}</span>
-      </div>
+      </button>
     `;
   }
 
@@ -1882,6 +1882,18 @@
       activeModal = "login";
       notificationPanelOpen = false;
       moreMenuOpen = false;
+      render();
+      return;
+    }
+
+    if (action === "change-household") {
+      rememberHousehold(state);
+      clearSession();
+      state.isAuthenticated = false;
+      activeModal = null;
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      persistLocalState(state);
       render();
       return;
     }
