@@ -2,10 +2,13 @@
   const STORAGE_KEY = "homeJob.householdState.v1";
   const SESSION_KEY = "homeJob.session.v1";
   const KNOWN_HOUSEHOLDS_KEY = "homeJob.knownHouseholds.v1";
+  const WEB_PUSH_ENABLED_KEY = "homeJob.webPushEnabled.v1";
   const API_STATE_ENDPOINT = "/api/state";
+  const API_PUSH_SUBSCRIPTION_ENDPOINT = "/api/push-subscription";
   const API_USER_HEADER = "x-household-user";
   const API_HOUSEHOLD_HEADER = "x-household-id";
   const API_PIN_HEADER = "x-household-pin";
+  const VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U";
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
@@ -51,10 +54,11 @@
   ];
   let session = loadSession();
   let state = applySession(loadState());
-  let activeView = "dashboard";
+  let routeTaskId = getRouteTaskId();
+  let activeView = routeTaskId ? "task-detail" : "dashboard";
   let activeFilter = "all";
   let searchQuery = "";
-  let selectedTaskId = pickInitialTaskId();
+  let selectedTaskId = routeTaskId || pickInitialTaskId();
   let selectedDate = toISO(new Date());
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
@@ -2439,18 +2443,69 @@
 
   async function requestNotifications() {
     if (!("Notification" in window)) {
-      toast("Powiadomienia niedostępne", "Ta przeglądarka nie obsługuje lokalnych powiadomień.");
+      toast("Powiadomienia niedostępne", "Ta przeglądarka nie obsługuje powiadomień.");
       return;
     }
 
-    const permission = await Notification.requestPermission();
-    if (permission === "granted") {
-      toast("Powiadomienia włączone", "Przypomnienia pojawią się o ustawionej godzinie.");
-      runReminderSweep();
-    } else {
-      toast("Powiadomienia wyłączone", "Alerty w aplikacji nadal będą działać.");
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      toast("Push niedostępny", "Na iPhonie dodaj HomeJob do ekranu początkowego i otwórz aplikację z ikony.");
+      return;
     }
+
+    if (!window.isSecureContext) {
+      toast("Wymagane HTTPS", "Push działa dopiero na opublikowanej stronie HTTPS.");
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        localStorage.removeItem(WEB_PUSH_ENABLED_KEY);
+        toast("Powiadomienia wyłączone", "Alerty w aplikacji nadal będą działać po jej otwarciu.");
+        render();
+        return;
+      }
+
+      const registration = serviceWorkerRegistration || (await registerServiceWorker());
+      if (!registration?.pushManager) {
+        toast("Push niedostępny", "Nie udało się uruchomić service workera.");
+        return;
+      }
+
+      const existingSubscription = await registration.pushManager.getSubscription();
+      const subscription =
+        existingSubscription ||
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        }));
+
+      await savePushSubscription(subscription);
+      localStorage.setItem(WEB_PUSH_ENABLED_KEY, "true");
+      toast("Powiadomienia push włączone", "Dostaniesz plan dnia o 08:00 i przypomnienia o godzinie zadania.");
+    } catch (error) {
+      console.warn("Nie udało się włączyć Web Push", error);
+      localStorage.removeItem(WEB_PUSH_ENABLED_KEY);
+      toast("Nie udało się włączyć push", "Sprawdź uprawnienia powiadomień i spróbuj ponownie.");
+    }
+
     render();
+  }
+
+  async function savePushSubscription(subscription) {
+    const response = await fetch(API_PUSH_SUBSCRIPTION_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ subscription: subscription.toJSON() })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Push subscription responded with ${response.status}`);
+    }
   }
 
   function runReminderSweep() {
@@ -2475,7 +2530,9 @@
       });
 
       task.lastNotifiedAt = new Date().toISOString();
-      showSystemNotification(title, body, task.id);
+      if (!isWebPushEnabled()) {
+        showSystemNotification(title, body, task.id);
+      }
     });
 
     state.notifications = state.notifications.slice(0, 30);
@@ -2535,15 +2592,34 @@
     }
   }
 
+  function isWebPushEnabled() {
+    return localStorage.getItem(WEB_PUSH_ENABLED_KEY) === "true";
+  }
+
+  function urlBase64ToUint8Array(value) {
+    const padding = "=".repeat((4 - (value.length % 4)) % 4);
+    const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(base64);
+    const output = new Uint8Array(raw.length);
+
+    for (let index = 0; index < raw.length; index += 1) {
+      output[index] = raw.charCodeAt(index);
+    }
+
+    return output;
+  }
+
   async function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) {
-      return;
+      return null;
     }
 
     try {
       serviceWorkerRegistration = await navigator.serviceWorker.register("./sw.js");
+      return serviceWorkerRegistration;
     } catch (error) {
       console.warn("Service worker nie został zarejestrowany", error);
+      return null;
     }
   }
 
@@ -2904,6 +2980,10 @@
       ?.filter((task) => task.assigneeId === state.currentUserId && task.status !== "done")
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
     return current?.id || state.tasks?.[0]?.id || null;
+  }
+
+  function getRouteTaskId() {
+    return new URLSearchParams(window.location.search).get("task");
   }
 
   function getTask(taskId) {

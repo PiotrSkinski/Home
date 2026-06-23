@@ -1,6 +1,7 @@
 {
   "name": "HomeJob",
   "short_name": "HomeJob",
+  "id": "/",
   "description": "Wspólna organizacja zadań domowych, przypomnień i punktów.",
   "start_url": "./index.html",
   "display": "standalone",
