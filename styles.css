@@ -565,6 +565,14 @@ button.metric {
   gap: 10px;
 }
 
+.points-reset-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .reward-dashboard-section {
   margin-top: -4px;
 }

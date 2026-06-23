@@ -252,12 +252,25 @@
         isRewardTask: Boolean(task.isRewardTask),
         rewardForUserId: task.rewardForUserId || null,
         rewardThreshold: Number(task.rewardThreshold) || null,
+        rewardPeriod: task.rewardPeriod || null,
         nextRecurringTaskId: task.nextRecurringTaskId || null,
         comments: Array.isArray(task.comments) ? task.comments : [],
         history: Array.isArray(task.history) ? task.history : [],
         lastNotifiedAt: task.lastNotifiedAt || null
       };
     });
+
+    nextState.rewardClaims = nextState.rewardClaims.map((claim) => ({
+      id: claim.id || uid("reward"),
+      userId: claim.userId || nextState.users[0]?.id || null,
+      threshold: Number(claim.threshold) || 0,
+      label: claim.label || "Nagroda",
+      status: claim.status === "done" ? "done" : "pending",
+      taskId: claim.taskId || null,
+      period: claim.period || getPointPeriodKey(claim.createdAt),
+      createdAt: claim.createdAt || new Date().toISOString(),
+      completedAt: claim.completedAt || null
+    }));
 
     return nextState;
   }
@@ -943,6 +956,7 @@
             <button class="chip" type="button" data-action="view" data-view="rewards">Pełny ranking</button>
           </div>
           ${renderMiniLeaderboard()}
+          ${renderPointResetNote()}
         </section>
 
         ${renderDashboardRewardTasks()}
@@ -1220,7 +1234,7 @@
                     ${avatar(user)}
                     <div>
                       <h3>${escapeHtml(user.name)}</h3>
-                      <p>${getUserPoints(user.id)} pkt łącznie</p>
+                      <p>${getUserPoints(user.id)} pkt w tym miesiącu</p>
                     </div>
                   </div>
                   <div class="compact-stats">
@@ -1351,6 +1365,7 @@
               <h2>Ranking</h2>
             </div>
             ${renderLeaderboard()}
+            ${renderPointResetNote()}
           </section>
 
           <section class="section-block">
@@ -1798,6 +1813,10 @@
           .join("")}
       </div>
     `;
+  }
+
+  function renderPointResetNote() {
+    return `<p class="points-reset-note">Punkty resetują się 1. dnia każdego miesiąca.</p>`;
   }
 
   function renderRewardAxis(points, variant = "") {
@@ -2597,12 +2616,12 @@
   function getUserPoints(userId, lastDays = null) {
     const completedPoints = state.tasks
       .filter((task) => task.status === "done" && task.completedById === userId)
-      .filter((task) => (lastDays ? isWithinLastDays(task.completedAt, lastDays) : true))
+      .filter((task) => (lastDays ? isWithinLastDays(task.completedAt, lastDays) : isInCurrentPointPeriod(task.completedAt)))
       .reduce((sum, task) => sum + task.points, 0);
 
     const transferPoints = state.pointEvents
       .filter((event) => event.userId === userId)
-      .filter((event) => (lastDays ? isWithinLastDays(event.createdAt, lastDays) : true))
+      .filter((event) => (lastDays ? isWithinLastDays(event.createdAt, lastDays) : isInCurrentPointPeriod(event.createdAt)))
       .reduce((sum, event) => sum + event.delta, 0);
 
     const overduePenalty = state.tasks.reduce((sum, task) => {
@@ -2610,7 +2629,7 @@
       if (penaltyUserId !== userId) {
         return sum;
       }
-      return sum - getOverdueDays(task, lastDays) * 10;
+      return sum - getOverdueDays(task, lastDays || "month") * 10;
     }, 0);
 
     return completedPoints + transferPoints + overduePenalty;
@@ -2635,7 +2654,12 @@
     }
 
     let startDate = addDays(penaltyBaseDate, 1);
-    if (lastDays) {
+    if (lastDays === "month") {
+      const windowStart = getPointPeriodStart();
+      if (windowStart > startDate) {
+        startDate = windowStart;
+      }
+    } else if (lastDays) {
       const windowStart = fromISO(toISO(addDays(new Date(), -(lastDays - 1))));
       if (windowStart > startDate) {
         startDate = windowStart;
@@ -2647,6 +2671,23 @@
     }
 
     return daysBetween(startDate, endDate) + 1;
+  }
+
+  function getPointPeriodStart(date = new Date()) {
+    return new Date(date.getFullYear(), date.getMonth(), 1);
+  }
+
+  function getPointPeriodKey(dateValue = new Date()) {
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue || Date.now());
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    return `${date.getFullYear()}-${month}`;
+  }
+
+  function isInCurrentPointPeriod(dateString) {
+    if (!dateString) {
+      return false;
+    }
+    return new Date(dateString) >= getPointPeriodStart();
   }
 
   function addPointEvent(event) {
@@ -2668,13 +2709,17 @@
 
     let changed = false;
     state.rewardClaims = Array.isArray(state.rewardClaims) ? state.rewardClaims : [];
+    const currentPeriod = getPointPeriodKey();
 
     state.users.forEach((user) => {
       const points = getUserPoints(user.id);
 
       REWARD_THRESHOLDS.forEach((threshold) => {
         const alreadyClaimed = state.rewardClaims.some(
-          (claim) => claim.userId === user.id && claim.threshold === threshold.points
+          (claim) =>
+            claim.userId === user.id &&
+            claim.threshold === threshold.points &&
+            getRewardClaimPeriod(claim) === currentPeriod
         );
 
         if (points < threshold.points || alreadyClaimed) {
@@ -2695,6 +2740,7 @@
           label: threshold.label,
           status: "pending",
           taskId: task.id,
+          period: currentPeriod,
           createdAt: new Date().toISOString(),
           completedAt: null
         });
@@ -2724,6 +2770,10 @@
       .sort((a, b) => a.points - b.points)[0]?.user;
   }
 
+  function getRewardClaimPeriod(claim) {
+    return claim.period || getPointPeriodKey(claim.createdAt);
+  }
+
   function createRewardTask(rewardedUser, assignee, threshold) {
     const dueDate = toISO(addDays(new Date(), 7));
 
@@ -2745,6 +2795,7 @@
       isRewardTask: true,
       rewardForUserId: rewardedUser.id,
       rewardThreshold: threshold.points,
+      rewardPeriod: getPointPeriodKey(),
       comments: [],
       history: [historyEntry(`${rewardedUser.name} osiągnął/osiągnęła próg ${threshold.points} pkt`, rewardedUser.id)],
       lastNotifiedAt: null
