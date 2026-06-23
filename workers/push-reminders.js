@@ -77,7 +77,7 @@ async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
       title: isOverdue ? "Zaległe zadanie" : "Czas na zadanie",
       body: isOverdue
         ? `To nadal czeka: ${task.title}`
-        : `Komputer poczeka. Masz zadanie: ${task.title}`,
+        : `Masz zadanie do wykonania: ${task.title}`,
       url: `./index.html?task=${encodeURIComponent(task.id)}`,
       tag: `homejob-task-${task.id}-${localNow.date}`,
       taskId: task.id
