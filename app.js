@@ -1548,6 +1548,7 @@
             }
             <button class="ghost-button" type="button" data-action="edit-task" data-task-id="${task.id}">Edytuj</button>
             <button class="ghost-button" type="button" data-action="open-task-modal">Dodaj</button>
+            <button class="danger-button" type="button" data-action="delete-task" data-task-id="${task.id}">Usuń</button>
           </div>
         </section>
 
@@ -2027,6 +2028,11 @@
       return;
     }
 
+    if (action === "delete-task") {
+      deleteTask(actionElement.dataset.taskId);
+      return;
+    }
+
     if (action === "assign-me") {
       reassignTask(actionElement.dataset.taskId, state.currentUserId);
       toast("Zadanie przepisane", "Możesz teraz oznaczyć je jako ukończone.");
@@ -2318,6 +2324,38 @@
     task.history.push(historyEntry("Przywrócono zadanie", state.currentUserId));
     saveState();
     toast("Cofnięto ukończenie", removedNextTask ? "Usunięto też kolejny termin z cyklu." : task.title);
+    render();
+  }
+
+  function deleteTask(taskId) {
+    const task = getTask(taskId);
+    if (!task) {
+      toast("Nie znaleziono zadania", "Odśwież listę i spróbuj ponownie.");
+      return;
+    }
+
+    const pointsText = task.status === "done" ? " Punkty za to zadanie też zostaną usunięte." : "";
+    const confirmed = window.confirm(`Usunąć zadanie "${task.title}"? Tej operacji nie można cofnąć.${pointsText}`);
+    if (!confirmed) {
+      return;
+    }
+
+    state.tasks.forEach((item) => {
+      if (item.nextRecurringTaskId === task.id) {
+        item.nextRecurringTaskId = null;
+      }
+    });
+    state.tasks = state.tasks.filter((item) => item.id !== task.id);
+    state.pointEvents = state.pointEvents.filter((event) => event.taskId !== task.id);
+    state.notifications = state.notifications.filter((item) => item.taskId !== task.id);
+    state.rewardClaims = state.rewardClaims.filter((claim) => claim.taskId !== task.id);
+
+    selectedTaskId = pickInitialTaskId();
+    activeView = "tasks";
+    activeModal = null;
+    editingTaskId = null;
+    saveState();
+    toast("Usunięto zadanie", task.title);
     render();
   }
 
