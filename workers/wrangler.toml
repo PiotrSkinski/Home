@@ -1,0 +1,15 @@
+name = "homejob-reminders"
+main = "push-reminders.js"
+compatibility_date = "2026-06-23"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U"
+VAPID_SUBJECT = "mailto:homejob@example.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "home"
+database_id = "WKLEJ_TUTAJ_DATABASE_ID_Z_CLOUDFLARE_D1"
