@@ -58,6 +58,7 @@
   let selectedDate = toISO(new Date());
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
+  let editingTaskId = null;
   let notificationPanelOpen = false;
   let moreMenuOpen = false;
   let serviceWorkerRegistration = null;
@@ -251,6 +252,7 @@
         isRewardTask: Boolean(task.isRewardTask),
         rewardForUserId: task.rewardForUserId || null,
         rewardThreshold: Number(task.rewardThreshold) || null,
+        nextRecurringTaskId: task.nextRecurringTaskId || null,
         comments: Array.isArray(task.comments) ? task.comments : [],
         history: Array.isArray(task.history) ? task.history : [],
         lastNotifiedAt: task.lastNotifiedAt || null
@@ -1520,11 +1522,12 @@
           <div class="split-actions">
             ${
               task.status === "done"
-                ? `<button class="ghost-button" type="button" data-action="reopen-task" data-task-id="${task.id}">Przywróć</button>`
+                ? `<button class="ghost-button" type="button" data-action="reopen-task" data-task-id="${task.id}">Cofnij ukończenie</button>`
                 : canComplete
                   ? `<button class="button" type="button" data-action="complete-task" data-task-id="${task.id}">Oznacz jako ukończone</button>`
                   : `<button class="ghost-button" type="button" data-action="assign-me" data-task-id="${task.id}">Przepisz na mnie</button>`
             }
+            <button class="ghost-button" type="button" data-action="edit-task" data-task-id="${task.id}">Edytuj</button>
             <button class="ghost-button" type="button" data-action="open-task-modal">Dodaj</button>
           </div>
         </section>
@@ -1622,26 +1625,40 @@
   }
 
   function renderTaskModal() {
+    const editingTask = editingTaskId ? getTask(editingTaskId) : null;
+    const isEditing = Boolean(editingTask);
+    const values = {
+      title: editingTask?.title || "",
+      dueDate: editingTask?.dueDate || selectedDate || toISO(new Date()),
+      reminderTime: editingTask?.reminderTime || "18:00",
+      assigneeId: editingTask?.assigneeId || state.currentUserId,
+      priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
+      room: editingTask?.room || "Inne",
+      recurrenceType: RECURRENCE[editingTask?.recurrence?.type] ? editingTask.recurrence.type : "none",
+      rotate: editingTask ? Boolean(editingTask.recurrence?.rotate) : true
+    };
+    const roomOptions = ROOM_OPTIONS.includes(values.room) ? ROOM_OPTIONS : [values.room, ...ROOM_OPTIONS];
+
     return `
       <div class="modal-backdrop" role="presentation" data-action="close-modal">
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
           <div class="modal-head">
-            <h2 class="modal-title" id="task-modal-title">Nowe zadanie</h2>
+            <h2 class="modal-title" id="task-modal-title">${isEditing ? "Edytuj zadanie" : "Nowe zadanie"}</h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
           <form data-form="task">
             <div class="form-grid">
               <label class="wide">
                 <span class="label">Nazwa</span>
-                <input class="input" name="title" placeholder="Np. umyć podłogę" maxlength="90" required autofocus />
+                <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="Np. umyć podłogę" maxlength="90" required autofocus />
               </label>
               <label>
                 <span class="label">Termin</span>
-                <input class="input" type="date" name="dueDate" value="${selectedDate || toISO(new Date())}" required />
+                <input class="input" type="date" name="dueDate" value="${escapeAttribute(values.dueDate)}" required />
               </label>
               <label>
                 <span class="label">Przypomnienie</span>
-                <input class="input" type="time" name="reminderTime" value="18:00" required />
+                <input class="input" type="time" name="reminderTime" value="${escapeAttribute(values.reminderTime)}" required />
               </label>
               <label>
                 <span class="label">Osoba</span>
@@ -1650,7 +1667,7 @@
                     .map(
                       (user) =>
                         `<option value="${user.id}" ${
-                          user.id === state.currentUserId ? "selected" : ""
+                          user.id === values.assigneeId ? "selected" : ""
                         }>${escapeHtml(user.name)}</option>`
                     )
                     .join("")}
@@ -1659,33 +1676,43 @@
               <label>
                 <span class="label">Priorytet</span>
                 <select class="select" name="priority" required>
-                  <option value="medium">Normalny · 10 pkt</option>
-                  <option value="high">Wysoki · 15 pkt</option>
-                  <option value="low">Lekki · 5 pkt</option>
+                  <option value="medium" ${values.priority === "medium" ? "selected" : ""}>Normalny · 10 pkt</option>
+                  <option value="high" ${values.priority === "high" ? "selected" : ""}>Wysoki · 15 pkt</option>
+                  <option value="low" ${values.priority === "low" ? "selected" : ""}>Lekki · 5 pkt</option>
                 </select>
               </label>
               <label>
                 <span class="label">Pomieszczenie</span>
                 <select class="select" name="room">
-                  ${ROOM_OPTIONS.map((room) => `<option value="${room}">${room}</option>`).join("")}
+                  ${roomOptions
+                    .map(
+                      (room) =>
+                        `<option value="${escapeAttribute(room)}" ${room === values.room ? "selected" : ""}>${escapeHtml(
+                          room
+                        )}</option>`
+                    )
+                    .join("")}
                 </select>
               </label>
               <label>
                 <span class="label">Powtarzanie</span>
                 <select class="select" name="recurrenceType">
                   ${Object.entries(RECURRENCE)
-                    .map(([value, label]) => `<option value="${value}">${label}</option>`)
+                    .map(
+                      ([value, label]) =>
+                        `<option value="${value}" ${value === values.recurrenceType ? "selected" : ""}>${label}</option>`
+                    )
                     .join("")}
                 </select>
               </label>
               <label class="wide status-line">
-                <input type="checkbox" name="rotate" checked />
+                <input type="checkbox" name="rotate" ${values.rotate ? "checked" : ""} />
                 <span>Rotacja między domownikami przy kolejnych cyklach</span>
               </label>
             </div>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-action="close-modal">Anuluj</button>
-              <button class="button" type="submit">Dodaj zadanie</button>
+              <button class="button" type="submit">${isEditing ? "Zapisz zmiany" : "Dodaj zadanie"}</button>
             </div>
           </form>
         </section>
@@ -1870,6 +1897,7 @@
     }
 
     if (action === "open-task-modal") {
+      editingTaskId = null;
       activeModal = "task";
       notificationPanelOpen = false;
       moreMenuOpen = false;
@@ -1931,8 +1959,26 @@
     if (action === "close-modal") {
       if (event.target === actionElement || actionElement.matches("button")) {
         activeModal = null;
+        editingTaskId = null;
         render();
       }
+      return;
+    }
+
+    if (action === "edit-task") {
+      const task = getTask(actionElement.dataset.taskId);
+      if (!task) {
+        toast("Nie znaleziono zadania", "Odśwież listę i spróbuj ponownie.");
+        return;
+      }
+
+      selectedTaskId = task.id;
+      editingTaskId = task.id;
+      activeModal = "task";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      queueMicrotask(() => document.querySelector("[name='title']")?.focus());
       return;
     }
 
@@ -2065,22 +2111,68 @@
 
     if (formType === "task") {
       const data = new FormData(form);
-      const priority = data.get("priority");
+      const rawPriority = String(data.get("priority"));
+      const priority = PRIORITY[rawPriority] ? rawPriority : "medium";
+      const title = String(data.get("title")).trim();
+      const dueDate = String(data.get("dueDate"));
+      const reminderTime = String(data.get("reminderTime"));
+      const assigneeId = String(data.get("assigneeId"));
+      const rawRecurrenceType = String(data.get("recurrenceType") || "none");
+      const recurrenceType = RECURRENCE[rawRecurrenceType] ? rawRecurrenceType : "none";
+
+      if (!title) {
+        toast("Uzupełnij zadanie", "Podaj nazwę zadania.");
+        return;
+      }
+
+      const editingTask = editingTaskId ? getTask(editingTaskId) : null;
+      if (editingTask) {
+        const reminderChanged =
+          editingTask.dueDate !== dueDate ||
+          editingTask.reminderTime !== reminderTime ||
+          editingTask.assigneeId !== assigneeId;
+
+        editingTask.title = title;
+        editingTask.room = String(data.get("room") || "Inne");
+        editingTask.assigneeId = assigneeId;
+        editingTask.dueDate = dueDate;
+        editingTask.reminderTime = reminderTime;
+        editingTask.priority = PRIORITY[priority] ? priority : "medium";
+        editingTask.recurrence = {
+          type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
+          rotate: data.has("rotate")
+        };
+        editingTask.points = editingTask.isRewardTask ? 5 : PRIORITY[editingTask.priority].points;
+        editingTask.assignedAt = reminderChanged ? new Date().toISOString() : editingTask.assignedAt;
+        editingTask.lastNotifiedAt = reminderChanged ? null : editingTask.lastNotifiedAt;
+        editingTask.history.push(historyEntry("Edytowano zadanie", state.currentUserId));
+
+        selectedTaskId = editingTask.id;
+        selectedDate = editingTask.dueDate;
+        calendarCursor = startOfMonth(fromISO(editingTask.dueDate));
+        activeModal = null;
+        editingTaskId = null;
+        saveState();
+        toast("Zapisano zmiany", editingTask.title);
+        render();
+        return;
+      }
+
       const task = {
         id: uid("task"),
-        title: String(data.get("title")).trim(),
+        title,
         room: String(data.get("room") || "Inne"),
-        assigneeId: String(data.get("assigneeId")),
+        assigneeId,
         createdById: state.currentUserId,
-        dueDate: String(data.get("dueDate")),
-        reminderTime: String(data.get("reminderTime")),
+        dueDate,
+        reminderTime,
         assignedAt: new Date().toISOString(),
         priority,
         status: "open",
         completedAt: null,
         completedById: null,
         recurrence: {
-          type: String(data.get("recurrenceType") || "none"),
+          type: recurrenceType,
           rotate: data.has("rotate")
         },
         points: PRIORITY[priority].points,
@@ -2094,6 +2186,7 @@
       selectedDate = task.dueDate;
       calendarCursor = startOfMonth(fromISO(task.dueDate));
       activeModal = null;
+      editingTaskId = null;
       saveState();
       toast("Dodano zadanie", task.title);
       render();
@@ -2176,6 +2269,7 @@
       toast("Nagroda przyznana", "Zdobyto symboliczne 5 pkt.");
     } else if (task.recurrence.type !== "none") {
       const nextTask = createNextRecurringTask(task);
+      task.nextRecurringTaskId = nextTask.id;
       state.tasks.unshift(nextTask);
       toast("Zadanie ukończone", `Dodano kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`);
     } else {
@@ -2196,9 +2290,11 @@
     task.status = "open";
     task.completedAt = null;
     task.completedById = null;
+    reopenRewardClaim(task);
+    const removedNextTask = removeGeneratedRecurringTask(task);
     task.history.push(historyEntry("Przywrócono zadanie", state.currentUserId));
     saveState();
-    toast("Zadanie przywrócone", task.title);
+    toast("Cofnięto ukończenie", removedNextTask ? "Usunięto też kolejny termin z cyklu." : task.title);
     render();
   }
 
@@ -2315,7 +2411,8 @@
       completedById: null,
       comments: [],
       history: [historyEntry("Utworzono z cyklu", state.currentUserId)],
-      lastNotifiedAt: null
+      lastNotifiedAt: null,
+      nextRecurringTaskId: null
     };
 
     return nextTask;
@@ -2670,6 +2767,41 @@
       claim.status = "done";
       claim.completedAt = new Date().toISOString();
     }
+  }
+
+  function reopenRewardClaim(task) {
+    if (!task.isRewardTask || !task.rewardForUserId || !task.rewardThreshold) {
+      return;
+    }
+
+    const claim = state.rewardClaims.find(
+      (item) =>
+        item.userId === task.rewardForUserId &&
+        item.threshold === task.rewardThreshold &&
+        item.taskId === task.id
+    );
+
+    if (claim) {
+      claim.status = "pending";
+      claim.completedAt = null;
+    }
+  }
+
+  function removeGeneratedRecurringTask(task) {
+    if (!task.nextRecurringTaskId) {
+      return false;
+    }
+
+    const generatedTask = getTask(task.nextRecurringTaskId);
+    task.nextRecurringTaskId = null;
+
+    if (!generatedTask || generatedTask.status === "done") {
+      return false;
+    }
+
+    state.tasks = state.tasks.filter((item) => item.id !== generatedTask.id);
+    task.history.push(historyEntry("Usunięto kolejne wystąpienie z cyklu", state.currentUserId));
+    return true;
   }
 
   function getCalendarDays(cursor) {
