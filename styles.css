@@ -26,11 +26,15 @@
 
 html {
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--bg);
 }
 
 body {
   min-height: 100vh;
+  max-width: 100%;
+  overflow-x: hidden;
   margin: 0;
   color: var(--ink);
   background:
@@ -835,6 +839,8 @@ button.metric {
 .task-list {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .task-card {
@@ -848,6 +854,10 @@ button.metric {
   background: rgba(255, 250, 244, 0.94);
   padding: 13px;
   box-shadow: 0 8px 20px rgba(82, 58, 36, 0.05);
+}
+
+.task-card > div {
+  min-width: 0;
 }
 
 .task-card:hover,
@@ -944,6 +954,8 @@ button.metric {
 .task-actions {
   display: flex;
   align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
   gap: 7px;
 }
 
@@ -1362,13 +1374,29 @@ button.metric {
 .leaderboard {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .leader-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
+  min-width: 0;
   gap: 10px;
+}
+
+.leader-person {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.leader-person strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress {
@@ -1387,6 +1415,8 @@ button.metric {
 
 .reward-axis {
   position: relative;
+  width: 100%;
+  min-width: 0;
   height: 24px;
   margin-top: 7px;
   border-radius: 999px;
@@ -1757,21 +1787,16 @@ button.metric {
 
   .filter-row {
     justify-content: flex-start;
-  }
-
-  .filter-row {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 4px;
-    scrollbar-width: none;
-  }
-
-  .filter-row::-webkit-scrollbar {
-    display: none;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 
   .chip {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    max-width: 100%;
     min-height: 38px;
   }
 
@@ -1824,6 +1849,8 @@ button.metric {
 
   .task-card {
     grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
+    max-width: 100%;
     gap: 10px;
     padding: 12px;
   }
@@ -1850,7 +1877,25 @@ button.metric {
   .task-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+    max-width: 100%;
     padding-left: 42px;
+  }
+
+  .leader-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .leader-row .person-points {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .leader-person {
+    gap: 7px;
+  }
+
+  .reward-axis {
+    height: 22px;
   }
 
   .day-cell {

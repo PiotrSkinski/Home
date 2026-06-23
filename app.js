@@ -1787,7 +1787,7 @@
             (row) => `
               <div class="leader-row">
                 ${avatar(row.user)}
-                <div class="truncate">
+                <div class="leader-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   ${renderRewardAxis(row.points)}
                 </div>
@@ -1811,7 +1811,7 @@
           const left = Math.min(100, (threshold.points / axisMax) * 100);
           const reached = points >= threshold.points ? "is-reached" : "";
           return `
-            <span class="reward-axis-marker ${reached}" style="left:${left}%" title="${threshold.label}: ${threshold.points} pkt">
+            <span class="reward-axis-marker ${reached}" style="left:clamp(20px, ${left}%, calc(100% - 20px))" title="${threshold.label}: ${threshold.points} pkt">
               <span>${threshold.points}</span>
             </span>
           `;
