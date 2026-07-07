@@ -992,6 +992,13 @@ button.metric {
   background: #ffe5bf;
 }
 
+.shopping-expand-button {
+  min-width: 0;
+  padding: 0 10px;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
 .empty-state {
   border: 1px dashed #dcc6ae;
   border-radius: var(--radius);
@@ -1051,6 +1058,15 @@ button.metric {
   border-top: 1px dashed var(--line);
 }
 
+.shopping-panel-top {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 250, 244, 0.94);
+  box-shadow: 0 8px 20px rgba(82, 58, 36, 0.05);
+}
+
 .shopping-list {
   display: grid;
   gap: 9px;
@@ -1058,10 +1074,11 @@ button.metric {
 
 .shopping-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   gap: 8px;
-  padding: 9px;
+  min-width: 0;
+  padding: 7px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: rgba(255, 250, 244, 0.72);
@@ -1091,8 +1108,10 @@ button.metric {
 }
 
 .shopping-missing-button {
-  min-height: 36px;
-  padding: 0 10px;
+  width: auto;
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 0.76rem;
 }
 
 .shopping-missing-button.is-active {
@@ -1151,8 +1170,24 @@ button.metric {
   gap: 14px;
 }
 
+.form-grid > label {
+  min-width: 0;
+}
+
 .form-grid .wide {
   grid-column: 1 / -1;
+}
+
+.task-form {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.task-form .form-actions {
+  margin-top: auto;
+  padding-top: 18px;
 }
 
 .form-actions {
@@ -1175,6 +1210,8 @@ button.metric {
 }
 
 .modal {
+  display: flex;
+  flex-direction: column;
   width: min(720px, 100%);
   max-height: min(760px, 92vh);
   overflow-y: auto;
@@ -2034,16 +2071,38 @@ button.metric {
 
   .modal-backdrop {
     align-items: stretch;
+    max-width: 100vw;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 0;
   }
 
   .modal {
     width: 100%;
+    max-width: 100vw;
     max-height: none;
     min-height: 100dvh;
+    overflow-x: hidden;
     border-radius: 0;
     padding: 16px 16px calc(28px + env(safe-area-inset-bottom));
+  }
+
+  .task-form {
+    min-height: calc(100dvh - 72px - env(safe-area-inset-bottom));
+  }
+
+  .form-grid {
+    min-width: 0;
+  }
+
+  .form-grid > label,
+  .select,
+  .input,
+  .textarea,
+  input[type="date"],
+  input[type="time"] {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .notification-panel {
@@ -2065,10 +2124,11 @@ button.metric {
   }
 
   .shopping-item {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
 
   .shopping-missing-button {
-    width: 100%;
+    justify-self: end;
+    width: auto;
   }
 }

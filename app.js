@@ -733,6 +733,7 @@
             <span>Nowe zadanie</span>
           </button>
           <button class="button shopping-button" type="button" data-action="open-shopping-modal">
+            <span class="action-icon" aria-hidden="true">＋</span>
             <span>Zakupy</span>
           </button>
         </div>
@@ -1118,14 +1119,17 @@
       `;
     }
 
+    const shopping = isShoppingTask(task);
+
     return `
       <section class="view task-detail-view">
         <div class="section-head detail-screen-head">
           <button class="ghost-button back-button" type="button" data-action="back-to-tasks">← Wróć do listy</button>
-          <span class="pill ${task.status === "done" ? "done" : PRIORITY[task.priority].className}">
-            ${task.status === "done" ? "Ukończone" : PRIORITY[task.priority].label}
+          <span class="pill ${task.status === "done" ? "done" : shopping ? "blue" : PRIORITY[task.priority].className}">
+            ${task.status === "done" ? "Ukończone" : shopping ? "Zakupy" : PRIORITY[task.priority].label}
           </span>
         </div>
+        ${shopping ? renderShoppingChecklist(task, "top") : ""}
         <section class="detail-pane detail-pane-standalone">
           ${renderInspector()}
         </section>
@@ -1507,7 +1511,11 @@
               ? `<button class="quick-button" type="button" data-action="assign-me" data-task-id="${task.id}" aria-label="Przepisz na mnie">↙</button>`
               : ""
           }
-          <button class="quick-button" type="button" data-action="select-task" data-task-id="${task.id}" aria-label="Szczegóły">›</button>
+          <button class="quick-button ${shopping ? "shopping-expand-button" : ""}" type="button" data-action="select-task" data-task-id="${
+            task.id
+          }" aria-label="${shopping ? "Rozwiń listę zakupów" : "Szczegóły"}">${
+            shopping ? "Rozwiń listę zakupów" : "›"
+          }</button>
         </div>
       </article>
     `;
@@ -1544,8 +1552,6 @@
             ${detailRow("Cykl", `${RECURRENCE[task.recurrence.type]}${task.recurrence.rotate ? " · rotacja" : ""}`)}
             ${detailRow("Autor", escapeHtml(creator.name))}
           </div>
-
-          ${shopping ? renderShoppingChecklist(task) : ""}
 
           <div class="split-actions">
             ${
@@ -1628,12 +1634,12 @@
     `;
   }
 
-  function renderShoppingChecklist(task) {
+  function renderShoppingChecklist(task, variant = "") {
     const canResolve = task.status !== "done" && task.assigneeId === state.currentUserId;
     const summary = getShoppingSummary(task);
 
     return `
-      <div class="shopping-panel">
+      <div class="shopping-panel ${variant === "top" ? "shopping-panel-top" : ""}">
         <div class="section-head">
           <h3>Lista zakupów</h3>
           <span class="pill blue">${summary.resolved}/${summary.total}</span>
@@ -1654,7 +1660,7 @@
                   <button class="ghost-button shopping-missing-button ${unavailable ? "is-active" : ""}" type="button" data-action="shopping-item-missing" data-task-id="${
                     task.id
                   }" data-item-id="${item.id}" ${canResolve ? "" : "disabled"}>
-                    ${unavailable ? "Brak zaznaczony" : "Brak"}
+                    ${unavailable ? "Brak" : "Brak"}
                   </button>
                 </div>
               `;
@@ -1721,14 +1727,16 @@
             }</h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
-          <form data-form="task" data-task-kind="${isShopping ? "shopping" : "standard"}">
+          <form class="task-form" data-form="task" data-task-kind="${isShopping ? "shopping" : "standard"}">
             <div class="form-grid">
-              <label class="wide">
-                <span class="label">Nazwa</span>
-                <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="${
-                  isShopping ? "Zakupy" : "Np. umyć podłogę"
-                }" maxlength="90" ${isShopping ? "" : "required"} autofocus />
-              </label>
+              ${
+                isShopping
+                  ? `<input type="hidden" name="title" value="Zakupy" />`
+                  : `<label class="wide">
+                      <span class="label">Nazwa</span>
+                      <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="Np. umyć podłogę" maxlength="90" required autofocus />
+                    </label>`
+              }
               <label>
                 <span class="label">Termin</span>
                 <input class="input" type="date" name="dueDate" value="${escapeAttribute(values.dueDate)}" required />
