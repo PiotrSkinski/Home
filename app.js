@@ -1762,10 +1762,10 @@
                 isShopping
                   ? `<label class="wide">
                       <span class="label">Produkty</span>
-                      <textarea class="textarea shopping-products-input" name="shoppingItems" rows="4" placeholder="Wpisz każdy produkt w osobnej linii" required>${escapeHtml(
+                      <textarea class="textarea shopping-products-input" name="shoppingItems" rows="10" placeholder="Wpisz każdy produkt w osobnej linii" required>${escapeHtml(
                         values.shoppingItems
                       )}</textarea>
-                      <span class="form-hint">${formatPoints(SHOPPING_ITEM_POINTS)} pkt za kupiony produkt. Brak = 0 pkt.</span>
+                      <span class="form-hint">Każda linia to inny produkt. Za kupiony produkt nalicza się ${formatPoints(SHOPPING_ITEM_POINTS)} pkt. Brak = 0 pkt.</span>
                     </label>`
                   : `<label>
                       <span class="label">Priorytet</span>
