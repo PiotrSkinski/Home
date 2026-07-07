@@ -1,4 +1,8 @@
 const DAILY_DIGEST_TIME = "08:00";
+const EVENING_REMINDER_TIME = "22:00";
+const DAILY_DIGEST_WINDOW_MINUTES = 180;
+const TASK_REMINDER_WINDOW_MINUTES = 90;
+const EVENING_REMINDER_WINDOW_MINUTES = 120;
 const TIME_ZONE = "Europe/Warsaw";
 const DEFAULT_VAPID_SUBJECT = "mailto:homejob@example.com";
 
@@ -33,11 +37,15 @@ async function runReminderJob(env) {
     const householdId = state.household?.id || row.id;
     const openTasks = state.tasks.filter((task) => task.status !== "done");
 
-    if (localNow.time === DAILY_DIGEST_TIME) {
+    if (isWithinTimeWindow(localNow.minutes, timeToMinutes(DAILY_DIGEST_TIME), DAILY_DIGEST_WINDOW_MINUTES)) {
       await sendDailyDigest(env, householdId, state, openTasks, localNow);
     }
 
     await sendTaskReminders(env, householdId, state, openTasks, localNow);
+
+    if (isWithinTimeWindow(localNow.minutes, timeToMinutes(EVENING_REMINDER_TIME), EVENING_REMINDER_WINDOW_MINUTES)) {
+      await sendEveningReminder(env, householdId, state, openTasks, localNow);
+    }
   }
 }
 
@@ -66,7 +74,9 @@ async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
 
 async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
   const dueTasks = openTasks.filter(
-    (task) => task.reminderTime === localNow.time && task.dueDate <= localNow.date
+    (task) =>
+      task.dueDate <= localNow.date &&
+      isWithinTimeWindow(localNow.minutes, timeToMinutes(task.reminderTime), TASK_REMINDER_WINDOW_MINUTES)
   );
 
   for (const task of dueTasks) {
@@ -81,6 +91,25 @@ async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
       url: `./index.html?task=${encodeURIComponent(task.id)}`,
       tag: `homejob-task-${task.id}-${localNow.date}`,
       taskId: task.id
+    });
+  }
+}
+
+async function sendEveningReminder(env, householdId, state, openTasks, localNow) {
+  for (const user of state.users) {
+    const tasks = openTasks.filter((task) => task.assigneeId === user.id && task.dueDate === localNow.date);
+    if (!tasks.length) {
+      continue;
+    }
+
+    await pushToUser(env, householdId, user.id, {
+      kind: "evening",
+      dedupeKey: `${householdId}:${user.id}:evening:${localNow.date}`,
+      title: "Niewykonane zadania",
+      body: `Masz niewykonane zadania z dzisiaj!\n${formatTaskList(tasks)}`,
+      url: "./index.html",
+      tag: `homejob-evening-${localNow.date}`,
+      taskId: null
     });
   }
 }
@@ -224,12 +253,30 @@ function getLocalDateTime(date) {
 
   return {
     date: `${value.year}-${value.month}-${value.day}`,
-    time: `${value.hour}:${value.minute}`
+    time: `${value.hour}:${value.minute}`,
+    minutes: Number(value.hour) * 60 + Number(value.minute)
   };
 }
 
+function timeToMinutes(time) {
+  const [hour, minute] = String(time || "").split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return null;
+  }
+
+  return hour * 60 + minute;
+}
+
+function isWithinTimeWindow(currentMinutes, targetMinutes, windowMinutes) {
+  if (!Number.isFinite(currentMinutes) || !Number.isFinite(targetMinutes)) {
+    return false;
+  }
+
+  return currentMinutes >= targetMinutes && currentMinutes < targetMinutes + windowMinutes;
+}
+
 function formatTaskList(tasks) {
-  const visible = tasks.slice(0, 5).map((task) => `• ${task.title}`);
+  const visible = tasks.slice(0, 5).map((task) => `- ${task.title}`);
   const rest = tasks.length - visible.length;
   return `${visible.join("\n")}${rest > 0 ? `\n+${rest} więcej` : ""}`;
 }

@@ -4,9 +4,10 @@ Ten Worker wysyła prawdziwe Web Push:
 
 - codziennie o 08:00 plan zadań na dziś dla każdego domownika,
 - o godzinie przypomnienia ustawionej w konkretnym zadaniu,
-- także dla zadań zaległych, raz dziennie o ich godzinie przypomnienia.
+- także dla zadań zaległych, raz dziennie o ich godzinie przypomnienia,
+- wieczorem od 22:00, jeśli domownik ma niewykonane zadania z dzisiaj.
 
-Cron działa co minutę, a kod przelicza czas na strefę `Europe/Warsaw`.
+Cron działa co minutę, a kod przelicza czas na strefę `Europe/Warsaw`. Powiadomienia mają okna czasowe, więc krótkie opóźnienie crona nie powinno zgubić przypomnienia.
 
 ## Konfiguracja
 
