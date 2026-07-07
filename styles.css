@@ -232,11 +232,22 @@ a {
 input[type="date"].input,
 input[type="time"].input {
   display: block;
-  inline-size: 100%;
+  width: auto;
+  inline-size: auto;
   min-inline-size: 0;
   max-inline-size: 100%;
   -webkit-appearance: none;
   appearance: none;
+}
+
+input[type="date"].input {
+  width: 158px;
+  inline-size: 158px;
+}
+
+input[type="time"].input {
+  width: 104px;
+  inline-size: 104px;
 }
 
 input[type="date"].input::-webkit-date-and-time-value,
@@ -2135,7 +2146,7 @@ button.metric {
 
   .modal input[type="date"],
   .modal input[type="time"] {
-    width: 100%;
+    width: auto;
     min-width: 0;
     max-width: 100%;
   }
