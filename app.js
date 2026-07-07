@@ -11,6 +11,7 @@
   const VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U";
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
+  const SHOPPING_ITEM_POINTS = 0.5;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
   const REWARD_THRESHOLDS = [
     { points: 200, label: "Nagroda" },
@@ -26,23 +27,13 @@
 
   const RECURRENCE = {
     none: "Jednorazowe",
+    daily: "Codziennie",
     weekly: "Co tydzień",
     biweekly: "Co 2 tygodnie",
     monthly: "Co miesiąc",
     quarterly: "Co 3 miesiące",
     yearly: "Co rok"
   };
-
-  const ROOM_OPTIONS = [
-    "Cały dom",
-    "Kuchnia",
-    "Łazienka",
-    "Salon",
-    "Sypialnia",
-    "Przedpokój",
-    "Balkon",
-    "Inne"
-  ];
 
   const app = document.querySelector("#app");
   const toastRoot = document.querySelector("#toast-root");
@@ -63,6 +54,7 @@
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
   let editingTaskId = null;
+  let taskModalKind = "standard";
   let notificationPanelOpen = false;
   let moreMenuOpen = false;
   let serviceWorkerRegistration = null;
@@ -234,17 +226,20 @@
 
     nextState.tasks = nextState.tasks.map((task) => {
       const recurrenceType = task.recurrence?.type === "seasonal" ? "quarterly" : task.recurrence?.type;
+      const taskType = task.type === "shopping" ? "shopping" : "standard";
+      const shoppingItems = normalizeShoppingItems(task.shoppingItems);
 
       return {
         id: task.id || uid("task"),
         title: task.title || "Zadanie",
-        room: task.room || "Inne",
+        type: taskType,
+        room: task.room || (taskType === "shopping" ? "Zakupy" : "Inne"),
         assigneeId: task.assigneeId || nextState.users[0].id,
         createdById: task.createdById || nextState.users[0].id,
         dueDate: task.dueDate || toISO(new Date()),
         reminderTime: task.reminderTime || "18:00",
         assignedAt: task.assignedAt || task.createdAt || `${task.dueDate || toISO(new Date())}T12:00:00.000Z`,
-        priority: PRIORITY[task.priority] ? task.priority : "medium",
+        priority: taskType === "shopping" ? "medium" : PRIORITY[task.priority] ? task.priority : "medium",
         status: task.status === "done" ? "done" : "open",
         completedAt: task.completedAt || null,
         completedById: task.completedById || null,
@@ -252,7 +247,13 @@
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
           rotate: Boolean(task.recurrence?.rotate)
         },
-        points: Number.isFinite(Number(task.points)) ? Number(task.points) : PRIORITY[task.priority || "medium"].points,
+        points:
+          taskType === "shopping"
+            ? getShoppingPotentialPoints(shoppingItems)
+            : Number.isFinite(Number(task.points))
+              ? Number(task.points)
+              : PRIORITY[task.priority || "medium"].points,
+        shoppingItems,
         isRewardTask: Boolean(task.isRewardTask),
         rewardForUserId: task.rewardForUserId || null,
         rewardThreshold: Number(task.rewardThreshold) || null,
@@ -696,7 +697,7 @@
           ${avatar(user)}
           <div class="person-name">${escapeHtml(user.name)}</div>
         </div>
-        <div class="person-points">${getUserPoints(user.id)} pkt</div>
+        <div class="person-points">${formatPoints(getUserPoints(user.id))} pkt</div>
       </div>
     `;
   }
@@ -730,6 +731,9 @@
           <button class="button" type="button" data-action="open-task-modal">
             <span class="action-icon" aria-hidden="true">＋</span>
             <span>Nowe zadanie</span>
+          </button>
+          <button class="button shopping-button" type="button" data-action="open-shopping-modal">
+            <span>Zakupy</span>
           </button>
         </div>
       </header>
@@ -891,7 +895,7 @@
               .map(
                 (user) => `
                   <option value="${user.id}" ${user.id === state.currentUserId ? "selected" : ""}>
-                    ${escapeHtml(user.name)} - ${getUserPoints(user.id)} pkt
+                    ${escapeHtml(user.name)} - ${formatPoints(getUserPoints(user.id))} pkt
                   </option>
                 `
               )
@@ -1062,7 +1066,7 @@
                   <small>${row.week} pkt w 7 dni</small>
                   ${renderRewardAxis(row.points, "compact")}
                 </span>
-                <span class="rank-points">${row.points} pkt</span>
+                <span class="rank-points">${formatPoints(row.points)} pkt</span>
               </div>
             `
           )
@@ -1238,7 +1242,7 @@
                     ${avatar(user)}
                     <div>
                       <h3>${escapeHtml(user.name)}</h3>
-                      <p>${getUserPoints(user.id)} pkt w tym miesiącu</p>
+                      <p>${formatPoints(getUserPoints(user.id))} pkt w tym miesiącu</p>
                     </div>
                   </div>
                   <div class="compact-stats">
@@ -1357,8 +1361,8 @@
         </div>
 
         <div class="metrics">
-          ${metric(getUserPoints(currentUser.id), `Punkty: ${escapeHtml(currentUser.name)}`)}
-          ${metric(getUserPoints(currentUser.id, 7), "Moje 7 dni")}
+          ${metric(formatPoints(getUserPoints(currentUser.id)), `Punkty: ${escapeHtml(currentUser.name)}`)}
+          ${metric(formatPoints(getUserPoints(currentUser.id, 7)), "Moje 7 dni")}
           ${metric(completedThisWeek.length, "Zrobione w 7 dni")}
           ${metric(totalDone, "Zrobione łącznie")}
         </div>
@@ -1463,9 +1467,13 @@
 
   function renderTaskCard(task) {
     const assignee = getUser(task.assigneeId);
-    const completeDisabled = task.status === "done" || task.assigneeId !== state.currentUserId;
+    const shopping = isShoppingTask(task);
+    const completeDisabled =
+      task.status === "done" || task.assigneeId !== state.currentUserId || (shopping && !isShoppingResolved(task));
     const meta = [
-      `<span class="pill ${PRIORITY[task.priority].className}">${PRIORITY[task.priority].label}</span>`,
+      shopping
+        ? `<span class="pill blue">Zakupy</span>`
+        : `<span class="pill ${PRIORITY[task.priority].className}">${PRIORITY[task.priority].label}</span>`,
       isOverdue(task) ? `<span class="pill overdue">Zaległe</span>` : "",
       task.status === "done" ? `<span class="pill done">Ukończone</span>` : "",
       task.recurrence.type !== "none" ? `<span class="pill blue">${RECURRENCE[task.recurrence.type]}</span>` : ""
@@ -1489,8 +1497,7 @@
             <span>${formatHumanDate(task.dueDate)}</span>
             <span>•</span>
             <span>${task.reminderTime}</span>
-            <span>•</span>
-            <span>${escapeHtml(task.room)}</span>
+            ${shopping ? `<span>•</span><span>${renderShoppingShortSummary(task)}</span>` : ""}
           </div>
           <div class="task-meta" style="margin-top: 7px">${meta}</div>
         </div>
@@ -1516,14 +1523,15 @@
     const creator = getUser(task.createdById);
     const canComplete = task.status !== "done" && task.assigneeId === state.currentUserId;
     const overdueDays = getOverdueDays(task);
+    const shopping = isShoppingTask(task);
 
     return `
       <div class="inspector-stack">
         <section class="detail-card">
           <div class="section-head">
             <h2>Szczegóły</h2>
-            <span class="pill ${task.status === "done" ? "done" : PRIORITY[task.priority].className}">
-              ${task.status === "done" ? "Ukończone" : PRIORITY[task.priority].label}
+            <span class="pill ${task.status === "done" ? "done" : shopping ? "blue" : PRIORITY[task.priority].className}">
+              ${task.status === "done" ? "Ukończone" : shopping ? "Zakupy" : PRIORITY[task.priority].label}
             </span>
           </div>
           <h3 class="detail-title">${escapeHtml(task.title)}</h3>
@@ -1531,19 +1539,22 @@
             ${detailRow("Osoba", `${avatar(assignee, "small")}<span>${escapeHtml(assignee.name)}</span>`)}
             ${detailRow("Termin", formatHumanDate(task.dueDate))}
             ${detailRow("Przypomn.", task.reminderTime)}
-            ${detailRow("Miejsce", escapeHtml(task.room))}
-            ${detailRow("Punkty", `${task.points} pkt`)}
+            ${detailRow("Punkty", getTaskPointsLabel(task))}
             ${overdueDays ? detailRow("Zwłoka", `${overdueDays} dni · -${overdueDays * 10} pkt`) : ""}
             ${detailRow("Cykl", `${RECURRENCE[task.recurrence.type]}${task.recurrence.rotate ? " · rotacja" : ""}`)}
             ${detailRow("Autor", escapeHtml(creator.name))}
           </div>
+
+          ${shopping ? renderShoppingChecklist(task) : ""}
 
           <div class="split-actions">
             ${
               task.status === "done"
                 ? `<button class="ghost-button" type="button" data-action="reopen-task" data-task-id="${task.id}">Cofnij ukończenie</button>`
                 : canComplete
-                  ? `<button class="button" type="button" data-action="complete-task" data-task-id="${task.id}">Oznacz jako ukończone</button>`
+                  ? `<button class="button" type="button" data-action="complete-task" data-task-id="${task.id}">${
+                      shopping ? "Zakończ zakupy" : "Oznacz jako ukończone"
+                    }</button>`
                   : `<button class="ghost-button" type="button" data-action="assign-me" data-task-id="${task.id}">Przepisz na mnie</button>`
             }
             <button class="ghost-button" type="button" data-action="edit-task" data-task-id="${task.id}">Edytuj</button>
@@ -1617,6 +1628,48 @@
     `;
   }
 
+  function renderShoppingChecklist(task) {
+    const canResolve = task.status !== "done" && task.assigneeId === state.currentUserId;
+    const summary = getShoppingSummary(task);
+
+    return `
+      <div class="shopping-panel">
+        <div class="section-head">
+          <h3>Lista zakupów</h3>
+          <span class="pill blue">${summary.resolved}/${summary.total}</span>
+        </div>
+        <div class="shopping-list">
+          ${task.shoppingItems
+            .map((item) => {
+              const bought = item.status === "bought";
+              const unavailable = item.status === "unavailable";
+              return `
+                <div class="shopping-item ${unavailable ? "is-unavailable" : ""}">
+                  <label class="shopping-check">
+                    <input type="checkbox" data-action="shopping-item-bought" data-task-id="${task.id}" data-item-id="${
+                item.id
+              }" ${bought ? "checked" : ""} ${canResolve ? "" : "disabled"} />
+                    <span>${escapeHtml(item.name)}</span>
+                  </label>
+                  <button class="ghost-button shopping-missing-button ${unavailable ? "is-active" : ""}" type="button" data-action="shopping-item-missing" data-task-id="${
+                    task.id
+                  }" data-item-id="${item.id}" ${canResolve ? "" : "disabled"}>
+                    ${unavailable ? "Brak zaznaczony" : "Brak"}
+                  </button>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+        ${
+          task.status === "done"
+            ? `<p class="shopping-note">Zakupy zamknięte. Punkty naliczone za kupione produkty.</p>`
+            : `<p class="shopping-note">Zadanie zakończy się, gdy każdy produkt będzie kupiony albo oznaczony jako brak.</p>`
+        }
+      </div>
+    `;
+  }
+
   function renderComments(task) {
     if (!task.comments.length) {
       return `<div class="empty-state"><strong>Bez komentarzy</strong><span>Dodaj pierwszy wpis.</span></div>`;
@@ -1647,30 +1700,34 @@
   function renderTaskModal() {
     const editingTask = editingTaskId ? getTask(editingTaskId) : null;
     const isEditing = Boolean(editingTask);
+    const isShopping = isShoppingTask(editingTask) || (!editingTask && taskModalKind === "shopping");
     const values = {
-      title: editingTask?.title || "",
+      title: editingTask?.title || (isShopping ? "Zakupy" : ""),
       dueDate: editingTask?.dueDate || selectedDate || toISO(new Date()),
       reminderTime: editingTask?.reminderTime || "18:00",
       assigneeId: editingTask?.assigneeId || state.currentUserId,
       priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
-      room: editingTask?.room || "Inne",
       recurrenceType: RECURRENCE[editingTask?.recurrence?.type] ? editingTask.recurrence.type : "none",
-      rotate: editingTask ? Boolean(editingTask.recurrence?.rotate) : true
+      rotate: editingTask ? Boolean(editingTask.recurrence?.rotate) : true,
+      shoppingItems: isShopping ? shoppingItemsToText(editingTask?.shoppingItems || []) : ""
     };
-    const roomOptions = ROOM_OPTIONS.includes(values.room) ? ROOM_OPTIONS : [values.room, ...ROOM_OPTIONS];
 
     return `
       <div class="modal-backdrop" role="presentation" data-action="close-modal">
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
           <div class="modal-head">
-            <h2 class="modal-title" id="task-modal-title">${isEditing ? "Edytuj zadanie" : "Nowe zadanie"}</h2>
+            <h2 class="modal-title" id="task-modal-title">${
+              isEditing ? "Edytuj zadanie" : isShopping ? "Nowe zakupy" : "Nowe zadanie"
+            }</h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
-          <form data-form="task">
+          <form data-form="task" data-task-kind="${isShopping ? "shopping" : "standard"}">
             <div class="form-grid">
               <label class="wide">
                 <span class="label">Nazwa</span>
-                <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="Np. umyć podłogę" maxlength="90" required autofocus />
+                <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="${
+                  isShopping ? "Zakupy" : "Np. umyć podłogę"
+                }" maxlength="90" ${isShopping ? "" : "required"} autofocus />
               </label>
               <label>
                 <span class="label">Termin</span>
@@ -1693,27 +1750,24 @@
                     .join("")}
                 </select>
               </label>
-              <label>
-                <span class="label">Priorytet</span>
-                <select class="select" name="priority" required>
-                  <option value="medium" ${values.priority === "medium" ? "selected" : ""}>Normalny · 10 pkt</option>
-                  <option value="high" ${values.priority === "high" ? "selected" : ""}>Wysoki · 15 pkt</option>
-                  <option value="low" ${values.priority === "low" ? "selected" : ""}>Lekki · 5 pkt</option>
-                </select>
-              </label>
-              <label>
-                <span class="label">Pomieszczenie</span>
-                <select class="select" name="room">
-                  ${roomOptions
-                    .map(
-                      (room) =>
-                        `<option value="${escapeAttribute(room)}" ${room === values.room ? "selected" : ""}>${escapeHtml(
-                          room
-                        )}</option>`
-                    )
-                    .join("")}
-                </select>
-              </label>
+              ${
+                isShopping
+                  ? `<label class="wide">
+                      <span class="label">Produkty</span>
+                      <textarea class="textarea" name="shoppingItems" rows="7" placeholder="Wpisz każdy produkt w osobnej linii" required>${escapeHtml(
+                        values.shoppingItems
+                      )}</textarea>
+                      <span class="form-hint">Za każdy kupiony produkt nalicza się ${formatPoints(SHOPPING_ITEM_POINTS)} pkt. Pozycja oznaczona jako brak nie daje punktów.</span>
+                    </label>`
+                  : `<label>
+                      <span class="label">Priorytet</span>
+                      <select class="select" name="priority" required>
+                        <option value="medium" ${values.priority === "medium" ? "selected" : ""}>Normalny · 10 pkt</option>
+                        <option value="high" ${values.priority === "high" ? "selected" : ""}>Wysoki · 15 pkt</option>
+                        <option value="low" ${values.priority === "low" ? "selected" : ""}>Lekki · 5 pkt</option>
+                      </select>
+                    </label>`
+              }
               <label>
                 <span class="label">Powtarzanie</span>
                 <select class="select" name="recurrenceType">
@@ -1811,7 +1865,7 @@
                   <strong>${escapeHtml(row.user.name)}</strong>
                   ${renderRewardAxis(row.points)}
                 </div>
-                <div class="person-points">${row.points} pkt</div>
+                <div class="person-points">${formatPoints(row.points)} pkt</div>
               </div>
             `
           )
@@ -1922,11 +1976,23 @@
 
     if (action === "open-task-modal") {
       editingTaskId = null;
+      taskModalKind = "standard";
       activeModal = "task";
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
       queueMicrotask(() => document.querySelector("[name='title']")?.focus());
+      return;
+    }
+
+    if (action === "open-shopping-modal") {
+      editingTaskId = null;
+      taskModalKind = "shopping";
+      activeModal = "task";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      queueMicrotask(() => document.querySelector("[name='shoppingItems']")?.focus());
       return;
     }
 
@@ -1984,6 +2050,7 @@
       if (event.target === actionElement || actionElement.matches("button")) {
         activeModal = null;
         editingTaskId = null;
+        taskModalKind = "standard";
         render();
       }
       return;
@@ -1998,6 +2065,7 @@
 
       selectedTaskId = task.id;
       editingTaskId = task.id;
+      taskModalKind = isShoppingTask(task) ? "shopping" : "standard";
       activeModal = "task";
       notificationPanelOpen = false;
       moreMenuOpen = false;
@@ -2030,6 +2098,11 @@
 
     if (action === "delete-task") {
       deleteTask(actionElement.dataset.taskId);
+      return;
+    }
+
+    if (action === "shopping-item-missing") {
+      toggleShoppingItemMissing(actionElement.dataset.taskId, actionElement.dataset.itemId);
       return;
     }
 
@@ -2090,6 +2163,13 @@
   }
 
   function handleChange(event) {
+    if (event.target.matches("[data-action='shopping-item-bought']")) {
+      updateShoppingItemStatus(
+        event.target.dataset.taskId,
+        event.target.dataset.itemId,
+        event.target.checked ? "bought" : "pending"
+      );
+    }
   }
 
   function handleInput(event) {
@@ -2140,21 +2220,31 @@
 
     if (formType === "task") {
       const data = new FormData(form);
+      const editingTask = editingTaskId ? getTask(editingTaskId) : null;
+      const taskType = isShoppingTask(editingTask) || form.dataset.taskKind === "shopping" ? "shopping" : "standard";
+      const isShopping = taskType === "shopping";
       const rawPriority = String(data.get("priority"));
-      const priority = PRIORITY[rawPriority] ? rawPriority : "medium";
-      const title = String(data.get("title")).trim();
+      const priority = isShopping ? "medium" : PRIORITY[rawPriority] ? rawPriority : "medium";
+      const title = String(data.get("title")).trim() || (isShopping ? "Zakupy" : "");
       const dueDate = String(data.get("dueDate"));
       const reminderTime = String(data.get("reminderTime"));
       const assigneeId = String(data.get("assigneeId"));
       const rawRecurrenceType = String(data.get("recurrenceType") || "none");
       const recurrenceType = RECURRENCE[rawRecurrenceType] ? rawRecurrenceType : "none";
+      const shoppingItems = isShopping
+        ? buildShoppingItemsFromText(String(data.get("shoppingItems") || ""), editingTask?.shoppingItems || [])
+        : [];
 
       if (!title) {
         toast("Uzupełnij zadanie", "Podaj nazwę zadania.");
         return;
       }
 
-      const editingTask = editingTaskId ? getTask(editingTaskId) : null;
+      if (isShopping && !shoppingItems.length) {
+        toast("Dodaj produkty", "Wpisz przynajmniej jeden produkt do kupienia.");
+        return;
+      }
+
       if (editingTask) {
         const reminderChanged =
           editingTask.dueDate !== dueDate ||
@@ -2162,16 +2252,18 @@
           editingTask.assigneeId !== assigneeId;
 
         editingTask.title = title;
-        editingTask.room = String(data.get("room") || "Inne");
+        editingTask.type = taskType;
+        editingTask.room = isShopping ? "Zakupy" : editingTask.room || "Inne";
         editingTask.assigneeId = assigneeId;
         editingTask.dueDate = dueDate;
         editingTask.reminderTime = reminderTime;
-        editingTask.priority = PRIORITY[priority] ? priority : "medium";
+        editingTask.priority = priority;
         editingTask.recurrence = {
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
           rotate: data.has("rotate")
         };
-        editingTask.points = editingTask.isRewardTask ? 5 : PRIORITY[editingTask.priority].points;
+        editingTask.shoppingItems = shoppingItems;
+        editingTask.points = getTaskPotentialPoints(editingTask);
         editingTask.assignedAt = reminderChanged ? new Date().toISOString() : editingTask.assignedAt;
         editingTask.lastNotifiedAt = reminderChanged ? null : editingTask.lastNotifiedAt;
         editingTask.history.push(historyEntry("Edytowano zadanie", state.currentUserId));
@@ -2181,6 +2273,7 @@
         calendarCursor = startOfMonth(fromISO(editingTask.dueDate));
         activeModal = null;
         editingTaskId = null;
+        taskModalKind = "standard";
         saveState();
         toast("Zapisano zmiany", editingTask.title);
         render();
@@ -2190,7 +2283,8 @@
       const task = {
         id: uid("task"),
         title,
-        room: String(data.get("room") || "Inne"),
+        type: taskType,
+        room: isShopping ? "Zakupy" : "Inne",
         assigneeId,
         createdById: state.currentUserId,
         dueDate,
@@ -2204,7 +2298,8 @@
           type: recurrenceType,
           rotate: data.has("rotate")
         },
-        points: PRIORITY[priority].points,
+        points: isShopping ? getShoppingPotentialPoints(shoppingItems) : PRIORITY[priority].points,
+        shoppingItems,
         comments: [],
         history: [historyEntry("Utworzono zadanie", state.currentUserId)],
         lastNotifiedAt: null
@@ -2216,6 +2311,7 @@
       calendarCursor = startOfMonth(fromISO(task.dueDate));
       activeModal = null;
       editingTaskId = null;
+      taskModalKind = "standard";
       saveState();
       toast("Dodano zadanie", task.title);
       render();
@@ -2283,11 +2379,20 @@
       return;
     }
 
+    if (isShoppingTask(task) && !isShoppingResolved(task)) {
+      toast("Dokończ listę zakupów", "Każdy produkt musi być kupiony albo oznaczony jako brak.");
+      selectedTaskId = task.id;
+      render();
+      return;
+    }
+
     const overdueDays = getOverdueDays(task);
+    const earnedPoints = getTaskPoints(task);
+    task.points = getTaskPotentialPoints(task);
     task.status = "done";
     task.completedAt = new Date().toISOString();
     task.completedById = state.currentUserId;
-    task.history.push(historyEntry(`Ukończono zadanie za ${task.points} pkt`, state.currentUserId));
+    task.history.push(historyEntry(`Ukończono zadanie za ${formatPoints(earnedPoints)} pkt`, state.currentUserId));
     completeRewardClaim(task);
     if (overdueDays > 0) {
       task.history.push(historyEntry(`Kara za zwłokę: -${overdueDays * 10} pkt`, state.currentUserId));
@@ -2300,10 +2405,12 @@
       const nextTask = createNextRecurringTask(task);
       task.nextRecurringTaskId = nextTask.id;
       state.tasks.unshift(nextTask);
-      toast("Zadanie ukończone", `Dodano kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`);
+      toast(isShoppingTask(task) ? "Zakupy zakończone" : "Zadanie ukończone", `Dodano kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`);
+    } else if (isShoppingTask(task)) {
+      toast("Zakupy zakończone", `Zdobyto ${formatPoints(earnedPoints)} pkt.`);
     } else {
       const penaltyText = overdueDays ? `, kara za zwłokę -${overdueDays * 10} pkt` : "";
-      toast("Zadanie ukończone", `Zdobyto ${task.points} pkt${penaltyText}.`);
+      toast("Zadanie ukończone", `Zdobyto ${formatPoints(earnedPoints)} pkt${penaltyText}.`);
     }
 
     saveState();
@@ -2449,7 +2556,7 @@
 
     state.tasks.forEach((task) => {
       if (task.status !== "done" && workload.has(task.assigneeId)) {
-        workload.set(task.assigneeId, workload.get(task.assigneeId) + task.points);
+        workload.set(task.assigneeId, workload.get(task.assigneeId) + getTaskPotentialPoints(task));
       }
     });
 
@@ -2461,6 +2568,13 @@
   function createNextRecurringTask(task) {
     const dueDate = getNextDueDate(task.dueDate, task.recurrence.type);
     const assigneeId = task.recurrence.rotate ? getNextUserId(task.assigneeId) : task.assigneeId;
+    const shoppingItems = isShoppingTask(task)
+      ? task.shoppingItems.map((item) => ({
+          ...item,
+          id: uid("shop"),
+          status: "pending"
+        }))
+      : [];
     const nextTask = {
       ...task,
       id: uid("task"),
@@ -2470,6 +2584,8 @@
       assignedAt: new Date().toISOString(),
       completedAt: null,
       completedById: null,
+      points: isShoppingTask(task) ? getShoppingPotentialPoints(shoppingItems) : task.points,
+      shoppingItems,
       comments: [],
       history: [historyEntry("Utworzono z cyklu", state.currentUserId)],
       lastNotifiedAt: null,
@@ -2681,7 +2797,11 @@
     if (searchQuery.trim()) {
       const query = searchQuery.trim().toLocaleLowerCase("pl-PL");
       tasks = tasks.filter((task) =>
-        `${task.title} ${task.room} ${getUser(task.assigneeId).name}`.toLocaleLowerCase("pl-PL").includes(query)
+        `${task.title} ${isShoppingTask(task) ? "zakupy " + shoppingItemsToText(task.shoppingItems) : ""} ${
+          getUser(task.assigneeId).name
+        }`
+          .toLocaleLowerCase("pl-PL")
+          .includes(query)
       );
     }
 
@@ -2727,11 +2847,160 @@
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
+  function isShoppingTask(task) {
+    return task?.type === "shopping";
+  }
+
+  function normalizeShoppingItems(items) {
+    if (!Array.isArray(items)) {
+      return [];
+    }
+
+    return items
+      .map((item) => {
+        const name = String(item?.name || "").trim();
+        const status = ["pending", "bought", "unavailable"].includes(item?.status) ? item.status : "pending";
+        return {
+          id: item?.id || uid("shop"),
+          name,
+          status
+        };
+      })
+      .filter((item) => item.name);
+  }
+
+  function buildShoppingItemsFromText(text, existingItems = []) {
+    const existingByName = new Map(
+      normalizeShoppingItems(existingItems).map((item) => [item.name.toLocaleLowerCase("pl-PL"), item])
+    );
+
+    return String(text || "")
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((name) => {
+        const existing = existingByName.get(name.toLocaleLowerCase("pl-PL"));
+        return {
+          id: existing?.id || uid("shop"),
+          name,
+          status: existing?.status || "pending"
+        };
+      });
+  }
+
+  function shoppingItemsToText(items) {
+    return normalizeShoppingItems(items)
+      .map((item) => item.name)
+      .join("\n");
+  }
+
+  function getShoppingSummary(task) {
+    const items = normalizeShoppingItems(task.shoppingItems);
+    const bought = items.filter((item) => item.status === "bought").length;
+    const unavailable = items.filter((item) => item.status === "unavailable").length;
+    return {
+      total: items.length,
+      bought,
+      unavailable,
+      resolved: bought + unavailable
+    };
+  }
+
+  function isShoppingResolved(task) {
+    const summary = getShoppingSummary(task);
+    return summary.total > 0 && summary.resolved === summary.total;
+  }
+
+  function getShoppingPotentialPoints(items) {
+    return normalizeShoppingItems(items).length * SHOPPING_ITEM_POINTS;
+  }
+
+  function getShoppingCurrentPoints(task) {
+    return getShoppingSummary(task).bought * SHOPPING_ITEM_POINTS;
+  }
+
+  function getTaskPotentialPoints(task) {
+    if (task.isRewardTask) {
+      return 5;
+    }
+    if (isShoppingTask(task)) {
+      return getShoppingPotentialPoints(task.shoppingItems);
+    }
+    return Number(task.points) || PRIORITY[task.priority || "medium"].points;
+  }
+
+  function getTaskPoints(task) {
+    if (task.isRewardTask) {
+      return 5;
+    }
+    if (isShoppingTask(task)) {
+      return getShoppingCurrentPoints(task);
+    }
+    return Number(task.points) || 0;
+  }
+
+  function getTaskPointsLabel(task) {
+    if (!isShoppingTask(task)) {
+      return `${formatPoints(getTaskPoints(task))} pkt`;
+    }
+
+    return `${formatPoints(getShoppingCurrentPoints(task))} / ${formatPoints(getShoppingPotentialPoints(task.shoppingItems))} pkt`;
+  }
+
+  function renderShoppingShortSummary(task) {
+    const summary = getShoppingSummary(task);
+    return `${summary.bought}/${summary.total} kupione`;
+  }
+
+  function formatPoints(points) {
+    const value = Number(points) || 0;
+    return Number.isInteger(value) ? String(value) : value.toLocaleString("pl-PL", { maximumFractionDigits: 1 });
+  }
+
+  function updateShoppingItemStatus(taskId, itemId, status) {
+    const task = getTask(taskId);
+    if (!task || !isShoppingTask(task) || task.status === "done") {
+      return;
+    }
+
+    if (task.assigneeId !== state.currentUserId) {
+      toast("To nie Twoje zakupy", "Najpierw przepisz zadanie na siebie.");
+      render();
+      return;
+    }
+
+    const item = task.shoppingItems.find((entry) => entry.id === itemId);
+    if (!item) {
+      return;
+    }
+
+    item.status = status;
+    task.points = getTaskPotentialPoints(task);
+
+    if (isShoppingResolved(task)) {
+      completeTask(task.id);
+      return;
+    }
+
+    saveState();
+    render();
+  }
+
+  function toggleShoppingItemMissing(taskId, itemId) {
+    const task = getTask(taskId);
+    const item = task?.shoppingItems?.find((entry) => entry.id === itemId);
+    if (!item) {
+      return;
+    }
+
+    updateShoppingItemStatus(taskId, itemId, item.status === "unavailable" ? "pending" : "unavailable");
+  }
+
   function getUserPoints(userId, lastDays = null) {
     const completedPoints = state.tasks
       .filter((task) => task.status === "done" && task.completedById === userId)
       .filter((task) => (lastDays ? isWithinLastDays(task.completedAt, lastDays) : isInCurrentPointPeriod(task.completedAt)))
-      .reduce((sum, task) => sum + task.points, 0);
+      .reduce((sum, task) => sum + getTaskPoints(task), 0);
 
     const transferPoints = state.pointEvents
       .filter((event) => event.userId === userId)
@@ -2987,6 +3256,9 @@
 
   function getNextDueDate(dateIso, recurrenceType) {
     const date = fromISO(dateIso);
+    if (recurrenceType === "daily") {
+      return toISO(addDays(date, 1));
+    }
     if (recurrenceType === "weekly") {
       return toISO(addDays(date, 7));
     }
