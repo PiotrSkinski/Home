@@ -12,6 +12,7 @@
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
   const SHOPPING_ITEM_POINTS = 0.5;
+  const SHOPPING_DELIVERY_POINTS = 5;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
   const REWARD_THRESHOLDS = [
     { points: 200, label: "Nagroda" },
@@ -1669,8 +1670,10 @@
         </div>
         ${
           task.status === "done"
-            ? `<p class="shopping-note">Zakupy zamknięte. Punkty naliczone za kupione produkty.</p>`
-            : `<p class="shopping-note">Zadanie zakończy się, gdy każdy produkt będzie kupiony albo oznaczony jako brak.</p>`
+            ? `<p class="shopping-note">Zakupy zamknięte. Punkty naliczone za przyniesienie zakupów i kupione produkty.</p>`
+            : `<p class="shopping-note">Zadanie zakończy się, gdy każdy produkt będzie kupiony albo oznaczony jako brak. Za przyniesienie zakupów doliczy się ${formatPoints(
+                SHOPPING_DELIVERY_POINTS
+              )} pkt.</p>`
         }
       </div>
     `;
@@ -1765,7 +1768,9 @@
                       <textarea class="textarea shopping-products-input" name="shoppingItems" rows="10" placeholder="Wpisz każdy produkt w osobnej linii" required>${escapeHtml(
                         values.shoppingItems
                       )}</textarea>
-                      <span class="form-hint">Każda linia to inny produkt. Za kupiony produkt nalicza się ${formatPoints(SHOPPING_ITEM_POINTS)} pkt. Brak = 0 pkt.</span>
+                      <span class="form-hint">Każda linia to inny produkt. Za przyniesienie zakupów nalicza się ${formatPoints(
+                        SHOPPING_DELIVERY_POINTS
+                      )} pkt, a za kupiony produkt ${formatPoints(SHOPPING_ITEM_POINTS)} pkt. Brak = 0 pkt.</span>
                     </label>`
                   : `<label>
                       <span class="label">Priorytet</span>
@@ -2920,11 +2925,12 @@
   }
 
   function getShoppingPotentialPoints(items) {
-    return normalizeShoppingItems(items).length * SHOPPING_ITEM_POINTS;
+    return SHOPPING_DELIVERY_POINTS + normalizeShoppingItems(items).length * SHOPPING_ITEM_POINTS;
   }
 
   function getShoppingCurrentPoints(task) {
-    return getShoppingSummary(task).bought * SHOPPING_ITEM_POINTS;
+    const deliveryPoints = task.status === "done" || isShoppingResolved(task) ? SHOPPING_DELIVERY_POINTS : 0;
+    return deliveryPoints + getShoppingSummary(task).bought * SHOPPING_ITEM_POINTS;
   }
 
   function getTaskPotentialPoints(task) {
