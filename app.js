@@ -1718,7 +1718,11 @@
       priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
       recurrenceType: RECURRENCE[editingTask?.recurrence?.type] ? editingTask.recurrence.type : "none",
       rotate: editingTask ? Boolean(editingTask.recurrence?.rotate) : true,
-      shoppingItems: isShopping ? shoppingItemsToText(editingTask?.shoppingItems || []) : ""
+      shoppingItems: isShopping ? shoppingItemsToText(editingTask?.shoppingItems || []) : "",
+      customPoints:
+        editingTask && !isShopping && Number(editingTask.points) !== PRIORITY[editingTask.priority || "medium"].points
+          ? String(editingTask.points)
+          : ""
     };
 
     return `
@@ -1779,6 +1783,11 @@
                         <option value="high" ${values.priority === "high" ? "selected" : ""}>Wysoki · 15 pkt</option>
                         <option value="low" ${values.priority === "low" ? "selected" : ""}>Lekki · 5 pkt</option>
                       </select>
+                    </label>
+                    <label>
+                      <span class="label">Własne punkty</span>
+                      <input class="input" type="number" name="customPoints" min="0" step="0.5" inputmode="decimal" placeholder="Wg priorytetu" value="${escapeAttribute(values.customPoints)}" />
+                      <span class="form-hint">Zostaw puste, aby liczyć wg priorytetu. Wpisz liczbę, żeby ustawić inną wartość, np. 25 dla mycia podłogi.</span>
                     </label>`
               }
               <label>
@@ -2238,6 +2247,11 @@
       const isShopping = taskType === "shopping";
       const rawPriority = String(data.get("priority"));
       const priority = isShopping ? "medium" : PRIORITY[rawPriority] ? rawPriority : "medium";
+      const rawCustomPoints = String(data.get("customPoints") || "").trim();
+      const customPoints =
+        !isShopping && rawCustomPoints !== "" && Number.isFinite(Number(rawCustomPoints)) && Number(rawCustomPoints) >= 0
+          ? Number(rawCustomPoints)
+          : null;
       const title = String(data.get("title")).trim() || (isShopping ? "Zakupy" : "");
       const dueDate = String(data.get("dueDate"));
       const reminderTime = String(data.get("reminderTime"));
@@ -2276,7 +2290,11 @@
           rotate: data.has("rotate")
         };
         editingTask.shoppingItems = shoppingItems;
-        editingTask.points = getTaskPotentialPoints(editingTask);
+        editingTask.points = isShopping
+          ? getShoppingPotentialPoints(shoppingItems)
+          : customPoints !== null
+            ? customPoints
+            : PRIORITY[priority].points;
         editingTask.assignedAt = reminderChanged ? new Date().toISOString() : editingTask.assignedAt;
         editingTask.lastNotifiedAt = reminderChanged ? null : editingTask.lastNotifiedAt;
         editingTask.history.push(historyEntry("Edytowano zadanie", state.currentUserId));
@@ -2311,7 +2329,7 @@
           type: recurrenceType,
           rotate: data.has("rotate")
         },
-        points: isShopping ? getShoppingPotentialPoints(shoppingItems) : PRIORITY[priority].points,
+        points: isShopping ? getShoppingPotentialPoints(shoppingItems) : customPoints !== null ? customPoints : PRIORITY[priority].points,
         shoppingItems,
         comments: [],
         history: [historyEntry("Utworzono zadanie", state.currentUserId)],
