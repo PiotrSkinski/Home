@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = "homeJob.householdState.v1";
+  const LAST_SYNCED_KEY = "homeJob.lastSyncedPayload.v1";
   const SESSION_KEY = "homeJob.session.v1";
   const KNOWN_HOUSEHOLDS_KEY = "homeJob.knownHouseholds.v1";
   const WEB_PUSH_ENABLED_KEY = "homeJob.webPushEnabled.v1";
@@ -62,7 +63,7 @@
   let serviceWorkerRegistration = null;
   let remoteHydrationFinished = false;
   let remoteSaveTimer = null;
-  let lastRemotePayload = "";
+  let lastRemotePayload = loadLastSyncedPayload();
 
   registerServiceWorker();
   syncRewardClaims();
@@ -75,6 +76,8 @@
   document.addEventListener("change", handleChange);
   document.addEventListener("input", handleInput);
   document.addEventListener("submit", handleSubmit);
+  document.addEventListener("visibilitychange", flushPendingSyncIfHidden);
+  window.addEventListener("pagehide", flushPendingSync);
 
   function createSeedState() {
     return {
@@ -297,6 +300,23 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   }
 
+  function loadLastSyncedPayload() {
+    try {
+      return localStorage.getItem(LAST_SYNCED_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function rememberSyncedPayload(payload) {
+    lastRemotePayload = payload;
+    try {
+      localStorage.setItem(LAST_SYNCED_KEY, payload);
+    } catch (error) {
+      console.warn("Nie udało się zapisać znacznika synchronizacji", error);
+    }
+  }
+
   function canUseRemoteApi() {
     return window.location.protocol === "https:";
   }
@@ -329,6 +349,8 @@
       return;
     }
 
+    const hasPendingLocalChanges = JSON.stringify(getRemoteStatePayload()) !== lastRemotePayload;
+
     try {
       const response = await fetch(`${API_STATE_ENDPOINT}?householdId=${encodeURIComponent(session.householdId)}`, {
         cache: "no-store",
@@ -350,8 +372,17 @@
         return;
       }
 
+      if (hasPendingLocalChanges) {
+        // Local device has changes from a previous session that never made it to the
+        // server (e.g. the app was closed before the debounced save fired). Trusting the
+        // server here would silently discard them, so push local state instead of
+        // overwriting it.
+        queueRemoteSave(100);
+        return;
+      }
+
       state = applySession(normalizeState(payload.state));
-      lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
       const rewardClaimsChanged = syncRewardClaims();
       persistLocalState(state);
       rememberHousehold(state);
@@ -380,6 +411,22 @@
     remoteSaveTimer = setTimeout(syncRemoteState, delay);
   }
 
+  function flushPendingSyncIfHidden() {
+    if (document.visibilityState === "hidden") {
+      flushPendingSync();
+    }
+  }
+
+  function flushPendingSync() {
+    if (!remoteSaveTimer) {
+      return;
+    }
+
+    clearTimeout(remoteSaveTimer);
+    remoteSaveTimer = null;
+    syncRemoteState();
+  }
+
   async function syncRemoteState() {
     const payload = JSON.stringify(getRemoteStatePayload());
 
@@ -402,7 +449,7 @@
         throw new Error(`API state responded with ${response.status}`);
       }
 
-      lastRemotePayload = payload;
+      rememberSyncedPayload(payload);
     } catch (error) {
       console.warn("Remote save failed", error);
     }
@@ -464,7 +511,7 @@
     persistLocalState(state);
     rememberHousehold(state);
     remoteHydrationFinished = true;
-    lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+    rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
     activeModal = null;
     selectedTaskId = pickInitialTaskId();
 
@@ -551,7 +598,7 @@
     persistLocalState(state);
     rememberHousehold(state);
     remoteHydrationFinished = true;
-    lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+    rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
     onboardingMembers = [
       { id: uid("draft"), name: "", pin: "" },
       { id: uid("draft"), name: "", pin: "" }
@@ -608,7 +655,7 @@
       persistLocalState(state);
       rememberHousehold(state);
       remoteHydrationFinished = true;
-      lastRemotePayload = JSON.stringify(getRemoteStatePayload());
+      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
       toast("Dołączono do domu", state.household.name);
       render();
     } catch (error) {
