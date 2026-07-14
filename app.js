@@ -1,6 +1,7 @@
 (() => {
   const STORAGE_KEY = "homeJob.householdState.v1";
   const LAST_SYNCED_KEY = "homeJob.lastSyncedPayload.v1";
+  const LAST_SYNCED_AT_KEY = "homeJob.lastSyncedUpdatedAt.v1";
   const SESSION_KEY = "homeJob.session.v1";
   const KNOWN_HOUSEHOLDS_KEY = "homeJob.knownHouseholds.v1";
   const WEB_PUSH_ENABLED_KEY = "homeJob.webPushEnabled.v1";
@@ -9,6 +10,9 @@
   const API_USER_HEADER = "x-household-user";
   const API_HOUSEHOLD_HEADER = "x-household-id";
   const API_PIN_HEADER = "x-household-pin";
+  const API_BASE_UPDATED_AT_HEADER = "x-base-updated-at";
+  const DELETED_TASKS_LIMIT = 300;
+  const REMOTE_REFRESH_MS = 60000;
   const VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U";
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
@@ -64,6 +68,7 @@
   let remoteHydrationFinished = false;
   let remoteSaveTimer = null;
   let lastRemotePayload = loadLastSyncedPayload();
+  let lastRemoteUpdatedAt = loadLastSyncedUpdatedAt();
 
   registerServiceWorker();
   syncRewardClaims();
@@ -76,8 +81,9 @@
   document.addEventListener("change", handleChange);
   document.addEventListener("input", handleInput);
   document.addEventListener("submit", handleSubmit);
-  document.addEventListener("visibilitychange", flushPendingSyncIfHidden);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("pagehide", flushPendingSync);
+  setInterval(refreshFromRemote, REMOTE_REFRESH_MS);
 
   function createSeedState() {
     return {
@@ -93,6 +99,7 @@
       pointEvents: [],
       notifications: [],
       rewardClaims: [],
+      deletedTaskIds: [],
       createdAt: new Date().toISOString()
     };
   }
@@ -212,6 +219,15 @@
       pointEvents: Array.isArray(data.pointEvents) ? data.pointEvents : [],
       notifications: Array.isArray(data.notifications) ? data.notifications : [],
       rewardClaims: Array.isArray(data.rewardClaims) ? data.rewardClaims : [],
+      deletedTaskIds: Array.isArray(data.deletedTaskIds)
+        ? data.deletedTaskIds
+            .map((item) => ({
+              id: item?.id || String(item || ""),
+              deletedAt: item?.deletedAt || new Date().toISOString()
+            }))
+            .filter((item) => item.id)
+            .slice(0, DELETED_TASKS_LIMIT)
+        : [],
       createdAt: data.createdAt || new Date().toISOString()
     };
 
@@ -308,10 +324,22 @@
     }
   }
 
-  function rememberSyncedPayload(payload) {
+  function loadLastSyncedUpdatedAt() {
+    try {
+      return localStorage.getItem(LAST_SYNCED_AT_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function rememberSyncedPayload(payload, updatedAt) {
     lastRemotePayload = payload;
+    if (updatedAt) {
+      lastRemoteUpdatedAt = updatedAt;
+    }
     try {
       localStorage.setItem(LAST_SYNCED_KEY, payload);
+      localStorage.setItem(LAST_SYNCED_AT_KEY, lastRemoteUpdatedAt || "");
     } catch (error) {
       console.warn("Nie udało się zapisać znacznika synchronizacji", error);
     }
@@ -339,6 +367,7 @@
       pointEvents: state.pointEvents,
       notifications: state.notifications,
       rewardClaims: state.rewardClaims,
+      deletedTaskIds: state.deletedTaskIds,
       createdAt: state.createdAt
     };
   }
@@ -382,7 +411,7 @@
       }
 
       state = applySession(normalizeState(payload.state));
-      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
+      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), payload.updatedAt);
       const rewardClaimsChanged = syncRewardClaims();
       persistLocalState(state);
       rememberHousehold(state);
@@ -411,10 +440,13 @@
     remoteSaveTimer = setTimeout(syncRemoteState, delay);
   }
 
-  function flushPendingSyncIfHidden() {
+  function handleVisibilityChange() {
     if (document.visibilityState === "hidden") {
       flushPendingSync();
+      return;
     }
+
+    refreshFromRemote();
   }
 
   function flushPendingSync() {
@@ -427,7 +459,51 @@
     syncRemoteState();
   }
 
-  async function syncRemoteState() {
+  async function refreshFromRemote() {
+    if (!canUseRemoteApi() || !remoteHydrationFinished || !session?.pin || document.visibilityState === "hidden") {
+      return;
+    }
+
+    if (JSON.stringify(getRemoteStatePayload()) !== lastRemotePayload) {
+      queueRemoteSave(100);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_STATE_ENDPOINT}?householdId=${encodeURIComponent(session.householdId)}`, {
+        cache: "no-store",
+        headers: {
+          accept: "application/json",
+          ...getAuthHeaders()
+        }
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      if (!payload.state || payload.updatedAt === lastRemoteUpdatedAt) {
+        return;
+      }
+
+      state = applySession(normalizeState(payload.state));
+      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), payload.updatedAt);
+      syncRewardClaims();
+      persistLocalState(state);
+      rememberHousehold(state);
+
+      if (!state.tasks.some((task) => task.id === selectedTaskId)) {
+        selectedTaskId = pickInitialTaskId();
+      }
+
+      render();
+    } catch (error) {
+      console.warn("Remote refresh failed", error);
+    }
+  }
+
+  async function syncRemoteState(attempt = 0) {
     const payload = JSON.stringify(getRemoteStatePayload());
 
     if (payload === lastRemotePayload) {
@@ -440,19 +516,110 @@
         headers: {
           "content-type": "application/json",
           accept: "application/json",
+          [API_BASE_UPDATED_AT_HEADER]: lastRemoteUpdatedAt || "",
           ...getAuthHeaders()
         },
         body: payload
       });
 
+      if (response.status === 409) {
+        const conflict = await response.json().catch(() => null);
+        if (conflict?.state && attempt < 3) {
+          adoptMergedRemoteState(conflict.state, conflict.updatedAt);
+          return syncRemoteState(attempt + 1);
+        }
+        console.warn("Remote save conflict could not be resolved");
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`API state responded with ${response.status}`);
       }
 
-      rememberSyncedPayload(payload);
+      const result = await response.json().catch(() => null);
+      rememberSyncedPayload(payload, result?.updatedAt);
     } catch (error) {
       console.warn("Remote save failed", error);
     }
+  }
+
+  function adoptMergedRemoteState(serverState, serverUpdatedAt) {
+    const merged = mergeStates(normalizeState(serverState), state);
+    state = applySession(normalizeState(merged));
+    if (serverUpdatedAt) {
+      lastRemoteUpdatedAt = serverUpdatedAt;
+      try {
+        localStorage.setItem(LAST_SYNCED_AT_KEY, lastRemoteUpdatedAt);
+      } catch (error) {
+        console.warn("Nie udało się zapisać znacznika synchronizacji", error);
+      }
+    }
+    syncRewardClaims();
+    persistLocalState(state);
+    rememberHousehold(state);
+
+    if (!state.tasks.some((task) => task.id === selectedTaskId)) {
+      selectedTaskId = pickInitialTaskId();
+    }
+
+    render();
+  }
+
+  function mergeStates(serverState, localState) {
+    const deletedById = new Map();
+    [...(serverState.deletedTaskIds || []), ...(localState.deletedTaskIds || [])].forEach((item) => {
+      if (item?.id && !deletedById.has(item.id)) {
+        deletedById.set(item.id, item);
+      }
+    });
+
+    const mergeById = (serverItems, localItems, pickOnConflict) => {
+      const result = new Map();
+      (serverItems || []).forEach((item) => {
+        if (item?.id) {
+          result.set(item.id, item);
+        }
+      });
+      (localItems || []).forEach((item) => {
+        if (!item?.id) {
+          return;
+        }
+        const existing = result.get(item.id);
+        result.set(item.id, existing ? pickOnConflict(existing, item) : item);
+      });
+      return Array.from(result.values());
+    };
+
+    const taskActivityStamp = (task) => {
+      const historyAt = task.history?.length ? task.history[task.history.length - 1]?.createdAt : null;
+      return Math.max(
+        Date.parse(historyAt || "") || 0,
+        Date.parse(task.completedAt || "") || 0,
+        Date.parse(task.assignedAt || "") || 0
+      );
+    };
+
+    const tasks = mergeById(serverState.tasks, localState.tasks, (serverTask, localTask) =>
+      taskActivityStamp(localTask) >= taskActivityStamp(serverTask) ? localTask : serverTask
+    ).filter((task) => !deletedById.has(task.id));
+
+    return {
+      household: localState.household,
+      users: mergeById(serverState.users, localState.users, (serverUser, localUser) => localUser),
+      tasks,
+      pointEvents: mergeById(serverState.pointEvents, localState.pointEvents, (serverEvent, localEvent) => localEvent),
+      notifications: mergeById(serverState.notifications, localState.notifications, (serverItem, localItem) => ({
+        ...localItem,
+        read: Boolean(serverItem.read || localItem.read)
+      }))
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 30),
+      rewardClaims: mergeById(serverState.rewardClaims, localState.rewardClaims, (serverClaim, localClaim) =>
+        serverClaim.status === "done" && localClaim.status !== "done" ? serverClaim : localClaim
+      ),
+      deletedTaskIds: Array.from(deletedById.values()).slice(0, DELETED_TASKS_LIMIT),
+      createdAt: serverState.createdAt || localState.createdAt
+    };
   }
 
   async function loginWithPin(householdId, userId, pin) {
@@ -511,7 +678,7 @@
     persistLocalState(state);
     rememberHousehold(state);
     remoteHydrationFinished = true;
-    rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
+    rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), remotePayload?.updatedAt);
     activeModal = null;
     selectedTaskId = pickInitialTaskId();
 
@@ -570,6 +737,7 @@
       userId: firstUser.id,
       pin: firstUser.pin
     };
+    let createdUpdatedAt = "";
 
     if (canUseRemoteApi()) {
       try {
@@ -585,6 +753,8 @@
         if (!response.ok) {
           throw new Error(`API state responded with ${response.status}`);
         }
+
+        createdUpdatedAt = (await response.json().catch(() => null))?.updatedAt || "";
       } catch (error) {
         console.warn("Household creation failed", error);
         toast("Nie udało się utworzyć domu", "Sprawdź połączenie i spróbuj ponownie.");
@@ -598,7 +768,7 @@
     persistLocalState(state);
     rememberHousehold(state);
     remoteHydrationFinished = true;
-    rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
+    rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), createdUpdatedAt);
     onboardingMembers = [
       { id: uid("draft"), name: "", pin: "" },
       { id: uid("draft"), name: "", pin: "" }
@@ -655,7 +825,7 @@
       persistLocalState(state);
       rememberHousehold(state);
       remoteHydrationFinished = true;
-      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()));
+      rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), payload.updatedAt);
       toast("Dołączono do domu", state.household.name);
       render();
     } catch (error) {
@@ -2518,6 +2688,7 @@
     state.pointEvents = state.pointEvents.filter((event) => event.taskId !== task.id);
     state.notifications = state.notifications.filter((item) => item.taskId !== task.id);
     state.rewardClaims = state.rewardClaims.filter((claim) => claim.taskId !== task.id);
+    rememberDeletedTask(task.id);
 
     selectedTaskId = pickInitialTaskId();
     activeView = "tasks";
@@ -3297,8 +3468,16 @@
     }
 
     state.tasks = state.tasks.filter((item) => item.id !== generatedTask.id);
+    rememberDeletedTask(generatedTask.id);
     task.history.push(historyEntry("Usunięto kolejne wystąpienie z cyklu", state.currentUserId));
     return true;
+  }
+
+  function rememberDeletedTask(taskId) {
+    state.deletedTaskIds = [
+      { id: taskId, deletedAt: new Date().toISOString() },
+      ...(state.deletedTaskIds || []).filter((item) => item.id !== taskId)
+    ].slice(0, DELETED_TASKS_LIMIT);
   }
 
   function getCalendarDays(cursor) {
@@ -3394,7 +3573,7 @@
   }
 
   function priorityRank(priority) {
-    return { high: 0, medium: 1, low: 2 }[priority] ?? 1;
+    return { urgent: -1, high: 0, medium: 1, low: 2 }[priority] ?? 1;
   }
 
   function historyEntry(text, userId) {

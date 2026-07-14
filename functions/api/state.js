@@ -1,6 +1,7 @@
 const API_USER_HEADER = "x-household-user";
 const API_HOUSEHOLD_HEADER = "x-household-id";
 const API_PIN_HEADER = "x-household-pin";
+const API_BASE_UPDATED_AT_HEADER = "x-base-updated-at";
 
 const responseHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -77,15 +78,36 @@ export async function onRequestPut({ request, env }) {
     return json({ error: "Identyfikator domu nie pasuje do zapisu." }, 400);
   }
 
+  // Optimistic locking: the client declares which server revision its state is based
+  // on. A write based on a stale revision (or none — legacy clients) must not silently
+  // overwrite newer data saved by another device; the client gets the current state
+  // back and merges instead.
+  const baseUpdatedAt = request.headers.get(API_BASE_UPDATED_AT_HEADER);
+  if (!baseUpdatedAt || baseUpdatedAt !== existingRow.updated_at) {
+    return json({ conflict: true, state: existingState, updatedAt: existingRow.updated_at }, 409);
+  }
+
   const updatedAt = new Date().toISOString();
-  await db
+  const result = await db
     .prepare(
       `UPDATE households
        SET name = ?1, invite_code = ?2, value = ?3, updated_at = ?4
-       WHERE id = ?5`
+       WHERE id = ?5 AND updated_at = ?6`
     )
-    .bind(nextState.household.name, nextState.household.inviteCode, JSON.stringify(nextState), updatedAt, householdId)
+    .bind(
+      nextState.household.name,
+      nextState.household.inviteCode,
+      JSON.stringify(nextState),
+      updatedAt,
+      householdId,
+      baseUpdatedAt
+    )
     .run();
+
+  if (!result.meta.changes) {
+    const currentRow = await getHouseholdRow(db, householdId);
+    return json({ conflict: true, state: parseState(currentRow.value), updatedAt: currentRow.updated_at }, 409);
+  }
 
   return json({ ok: true, updatedAt });
 }
