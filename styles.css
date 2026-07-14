@@ -940,6 +940,25 @@ button.metric {
   background: var(--teal);
 }
 
+.task-card.is-projected {
+  border-style: dashed;
+  background: rgba(255, 250, 244, 0.55);
+  box-shadow: none;
+}
+
+.task-card.is-projected .task-check {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.task-card.is-projected .task-title {
+  color: var(--muted);
+}
+
+.dot.is-projected {
+  opacity: 0.45;
+}
+
 .task-title {
   margin: 0 0 7px;
   overflow-wrap: anywhere;

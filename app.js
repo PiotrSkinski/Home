@@ -16,6 +16,7 @@
   const VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U";
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
+  const RECURRING_PROJECTION_DAYS = 365;
   const SHOPPING_ITEM_POINTS = 0.5;
   const SHOPPING_DELIVERY_POINTS = 5;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
@@ -1366,7 +1367,11 @@
 
   function renderCalendarView() {
     const days = getCalendarDays(calendarCursor);
+    const rangeStart = days[0].iso;
+    const rangeEnd = days[days.length - 1].iso;
+    const projectedByDay = getProjectedOccurrencesByDay(rangeStart, rangeEnd);
     const selectedTasks = sortTasks(state.tasks.filter((task) => task.dueDate === selectedDate));
+    const projectedForSelectedDay = projectedByDay.get(selectedDate) || [];
     const title = new Intl.DateTimeFormat("pl-PL", { month: "long", year: "numeric" }).format(calendarCursor);
 
     return `
@@ -1391,7 +1396,7 @@
             </div>
             <div class="calendar-grid">
               ${["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"].map((day) => `<div class="weekday">${day}</div>`).join("")}
-              ${days.map((day) => renderDayCell(day)).join("")}
+              ${days.map((day) => renderDayCell(day, projectedByDay.get(day.iso) || [])).join("")}
             </div>
           </section>
 
@@ -1400,15 +1405,17 @@
               <h2>${formatHumanDate(selectedDate)}</h2>
             </div>
             ${renderTaskList(selectedTasks, "Ten dzień jest pusty", "Nie ma tu jeszcze zadań.")}
+            ${renderProjectedTaskList(projectedForSelectedDay)}
           </section>
         </div>
       </section>
     `;
   }
 
-  function renderDayCell(day) {
+  function renderDayCell(day, projectedTasks = []) {
     const tasks = state.tasks.filter((task) => task.dueDate === day.iso);
-    const visibleDots = tasks.slice(0, 5);
+    const allTasks = [...tasks, ...projectedTasks];
+    const visibleDots = allTasks.slice(0, 5);
     const className = [
       "day-cell",
       day.inMonth ? "" : "is-muted",
@@ -1425,11 +1432,13 @@
           ${visibleDots
             .map(
               (task) =>
-                `<span class="dot ${task.status === "done" ? "done" : PRIORITY[task.priority].className}" aria-hidden="true"></span>`
+                `<span class="dot ${task.status === "done" ? "done" : PRIORITY[task.priority].className} ${
+                  task.isProjected ? "is-projected" : ""
+                }" aria-hidden="true"></span>`
             )
             .join("")}
         </span>
-        ${tasks.length ? `<span class="day-count">${tasks.length} zad.</span>` : ""}
+        ${allTasks.length ? `<span class="day-count">${allTasks.length} zad.</span>` : ""}
       </button>
     `;
   }
@@ -1667,6 +1676,43 @@
         <div class="reward-icon" aria-hidden="true">${icon}</div>
         <h3>${title} ${achieved ? "✓" : ""}</h3>
         <p>${text}</p>
+      </article>
+    `;
+  }
+
+  function renderProjectedTaskList(occurrences) {
+    if (!occurrences.length) {
+      return "";
+    }
+
+    return `
+      <div class="task-list projected-task-list">
+        ${occurrences.map((occurrence) => renderProjectedTaskCard(occurrence)).join("")}
+      </div>
+    `;
+  }
+
+  function renderProjectedTaskCard(occurrence) {
+    const assignee = getUser(occurrence.assigneeId);
+
+    return `
+      <article class="task-card is-projected">
+        <span class="task-check" aria-hidden="true">↻</span>
+        <div>
+          <h3 class="task-title">${escapeHtml(occurrence.title)}</h3>
+          <div class="task-meta">
+            ${avatar(assignee, "small")}
+            <span>${escapeHtml(assignee.name)}</span>
+            <span>•</span>
+            <span>${formatHumanDate(occurrence.dueDate)}</span>
+            <span>•</span>
+            <span>${occurrence.reminderTime}</span>
+          </div>
+          <div class="task-meta" style="margin-top: 7px">
+            <span class="pill ${PRIORITY[occurrence.priority].className}">${PRIORITY[occurrence.priority].label}</span>
+            <span class="pill blue">Zaplanowane</span>
+          </div>
+        </div>
       </article>
     `;
   }
@@ -1993,10 +2039,10 @@
                   : `<label>
                       <span class="label">Priorytet</span>
                       <select class="select" name="priority" required>
+                        <option value="low" ${values.priority === "low" ? "selected" : ""}>Lekki · 5 pkt</option>
                         <option value="medium" ${values.priority === "medium" ? "selected" : ""}>Normalny · 10 pkt</option>
                         <option value="high" ${values.priority === "high" ? "selected" : ""}>Wysoki · 15 pkt</option>
                         <option value="urgent" ${values.priority === "urgent" ? "selected" : ""}>Bardzo wysoki · 25 pkt</option>
-                        <option value="low" ${values.priority === "low" ? "selected" : ""}>Lekki · 5 pkt</option>
                       </select>
                     </label>`
               }
@@ -2538,6 +2584,7 @@
       };
 
       state.tasks.unshift(task);
+      notifyNewTask(task);
       selectedTaskId = task.id;
       selectedDate = task.dueDate;
       calendarCursor = startOfMonth(fromISO(task.dueDate));
@@ -2893,6 +2940,29 @@
     if (!response.ok) {
       throw new Error(`Push subscription responded with ${response.status}`);
     }
+  }
+
+  function notifyNewTask(task) {
+    const creator = getUser(state.currentUserId);
+    const isRecurring = task.recurrence.type !== "none";
+    const title = isRecurring ? "Nowe zadanie cykliczne" : "Nowe zadanie";
+    const body = `${creator.name} dodał(a): ${task.title}`;
+
+    state.users
+      .filter((user) => user.id !== state.currentUserId)
+      .forEach((user) => {
+        state.notifications.unshift({
+          id: uid("notification"),
+          taskId: task.id,
+          title,
+          body,
+          recipientUserId: user.id,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+      });
+
+    state.notifications = state.notifications.slice(0, 30);
   }
 
   function runReminderSweep() {
@@ -3525,6 +3595,51 @@
       return state.users[0].id;
     }
     return state.users[(index + 1) % state.users.length].id;
+  }
+
+  function getProjectedOccurrencesByDay(rangeStartIso, rangeEndIso) {
+    const byDay = new Map();
+
+    state.tasks.forEach((task) => {
+      if (task.status === "done" || task.recurrence.type === "none" || task.isRewardTask || isShoppingTask(task)) {
+        return;
+      }
+
+      const horizon = toISO(addDays(fromISO(task.dueDate), RECURRING_PROJECTION_DAYS));
+      let dueDate = task.dueDate;
+      let assigneeId = task.assigneeId;
+      let guard = 0;
+
+      while (guard < 500) {
+        guard += 1;
+        dueDate = getNextDueDate(dueDate, task.recurrence.type);
+        if (dueDate > horizon || dueDate > rangeEndIso) {
+          break;
+        }
+
+        assigneeId = task.recurrence.rotate ? getNextUserId(assigneeId) : assigneeId;
+
+        if (dueDate >= rangeStartIso) {
+          const occurrence = {
+            id: `${task.id}__projected__${dueDate}`,
+            sourceTaskId: task.id,
+            title: task.title,
+            dueDate,
+            reminderTime: task.reminderTime,
+            assigneeId,
+            priority: task.priority,
+            recurrence: task.recurrence,
+            isProjected: true
+          };
+          if (!byDay.has(dueDate)) {
+            byDay.set(dueDate, []);
+          }
+          byDay.get(dueDate).push(occurrence);
+        }
+      }
+    });
+
+    return byDay;
   }
 
   function pickInitialTaskId() {
