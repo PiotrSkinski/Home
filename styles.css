@@ -894,6 +894,33 @@ button.metric {
   background: #fff0dc;
 }
 
+.weekday-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.weekday-chip {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+
+.weekday-chip input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.weekday-chip:has(input:checked) {
+  border-color: rgba(184, 95, 69, 0.2);
+  color: var(--teal-strong);
+  background: #fff0dc;
+}
+
 .task-list {
   display: grid;
   gap: 10px;

@@ -17,6 +17,7 @@
   const SYNC_DEBOUNCE_MS = 700;
   const REMINDER_REPEAT_MINUTES = 30;
   const RECURRING_PROJECTION_DAYS = 365;
+  const WEEKDAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"];
   const SHOPPING_ITEM_POINTS = 0.5;
   const SHOPPING_DELIVERY_POINTS = 5;
   const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
@@ -267,7 +268,8 @@
         completedById: task.completedById || null,
         recurrence: {
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
-          rotate: Boolean(task.recurrence?.rotate)
+          rotate: Boolean(task.recurrence?.rotate),
+          skipWeekdays: normalizeSkipWeekdays(task.recurrence?.skipWeekdays)
         },
         points:
           taskType === "shopping"
@@ -304,6 +306,15 @@
 
   function normalizePin(pin) {
     return String(pin || "").replace(/\D/g, "").slice(0, 4);
+  }
+
+  function normalizeSkipWeekdays(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return Array.from(
+      new Set(value.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))
+    ).sort((a, b) => a - b);
   }
 
   function saveState() {
@@ -1814,7 +1825,14 @@
             ${detailRow("Przypomn.", task.reminderTime)}
             ${detailRow("Punkty", getTaskPointsLabel(task))}
             ${overdueDays ? detailRow("Zwłoka", `${overdueDays} dni · -${overdueDays * 10} pkt`) : ""}
-            ${detailRow("Cykl", `${RECURRENCE[task.recurrence.type]}${task.recurrence.rotate ? " · rotacja" : ""}`)}
+            ${detailRow(
+              "Cykl",
+              `${RECURRENCE[task.recurrence.type]}${task.recurrence.rotate ? " · rotacja" : ""}${
+                task.recurrence.skipWeekdays?.length
+                  ? ` · pomija: ${task.recurrence.skipWeekdays.map((day) => WEEKDAY_LABELS[day]).join(", ")}`
+                  : ""
+              }`
+            )}
             ${detailRow("Autor", escapeHtml(creator.name))}
           </div>
 
@@ -1982,6 +2000,7 @@
       priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
       recurrenceType: RECURRENCE[editingTask?.recurrence?.type] ? editingTask.recurrence.type : "none",
       rotate: editingTask ? Boolean(editingTask.recurrence?.rotate) : true,
+      skipWeekdays: normalizeSkipWeekdays(editingTask?.recurrence?.skipWeekdays),
       shoppingItems: isShopping ? shoppingItemsToText(editingTask?.shoppingItems || []) : ""
     };
 
@@ -2060,6 +2079,22 @@
               <label class="wide status-line">
                 <input type="checkbox" name="rotate" ${values.rotate ? "checked" : ""} />
                 <span>Rotacja między domownikami przy kolejnych cyklach</span>
+              </label>
+              <label class="wide">
+                <span class="label">Pomiń w te dni</span>
+                <div class="weekday-picker">
+                  ${WEEKDAY_LABELS.map(
+                    (label, index) => `
+                      <label class="chip weekday-chip">
+                        <input type="checkbox" name="skipWeekday" value="${index}" ${
+                          values.skipWeekdays.includes(index) ? "checked" : ""
+                        } />
+                        ${label}
+                      </label>
+                    `
+                  ).join("")}
+                </div>
+                <span class="form-hint">Dotyczy zadań cyklicznych — pominięty dzień przesuwa termin na kolejny.</span>
               </label>
             </div>
             <div class="form-actions">
@@ -2509,6 +2544,7 @@
       const assigneeId = String(data.get("assigneeId"));
       const rawRecurrenceType = String(data.get("recurrenceType") || "none");
       const recurrenceType = RECURRENCE[rawRecurrenceType] ? rawRecurrenceType : "none";
+      const skipWeekdays = normalizeSkipWeekdays(data.getAll("skipWeekday"));
       const shoppingItems = isShopping
         ? buildShoppingItemsFromText(String(data.get("shoppingItems") || ""), editingTask?.shoppingItems || [])
         : [];
@@ -2538,7 +2574,8 @@
         editingTask.priority = priority;
         editingTask.recurrence = {
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
-          rotate: data.has("rotate")
+          rotate: data.has("rotate"),
+          skipWeekdays
         };
         editingTask.shoppingItems = shoppingItems;
         editingTask.points = getTaskPotentialPoints(editingTask);
@@ -2574,7 +2611,8 @@
         completedById: null,
         recurrence: {
           type: recurrenceType,
-          rotate: data.has("rotate")
+          rotate: data.has("rotate"),
+          skipWeekdays
         },
         points: isShopping ? getShoppingPotentialPoints(shoppingItems) : PRIORITY[priority].points,
         shoppingItems,
@@ -2846,7 +2884,7 @@
   }
 
   function createNextRecurringTask(task) {
-    const dueDate = getNextDueDate(task.dueDate, task.recurrence.type);
+    const dueDate = getNextValidDueDate(task.dueDate, task.recurrence);
     const assigneeId = task.recurrence.rotate ? getNextUserId(task.assigneeId) : task.assigneeId;
     const shoppingItems = isShoppingTask(task)
       ? task.shoppingItems.map((item) => ({
@@ -3589,6 +3627,20 @@
     return dateIso;
   }
 
+  function getIsoWeekday(dateIso) {
+    return (fromISO(dateIso).getDay() + 6) % 7;
+  }
+
+  function getNextValidDueDate(dateIso, recurrence) {
+    let next = getNextDueDate(dateIso, recurrence.type);
+    let guard = 0;
+    while (recurrence.skipWeekdays?.length && recurrence.skipWeekdays.includes(getIsoWeekday(next)) && guard < 14) {
+      next = getNextDueDate(next, recurrence.type);
+      guard += 1;
+    }
+    return next;
+  }
+
   function getNextUserId(currentId) {
     const index = state.users.findIndex((user) => user.id === currentId);
     if (index === -1) {
@@ -3612,7 +3664,7 @@
 
       while (guard < 500) {
         guard += 1;
-        dueDate = getNextDueDate(dueDate, task.recurrence.type);
+        dueDate = getNextValidDueDate(dueDate, task.recurrence);
         if (dueDate > horizon || dueDate > rangeEndIso) {
           break;
         }
