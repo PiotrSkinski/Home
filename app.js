@@ -92,7 +92,8 @@
       household: {
         id: null,
         name: "HomeJob",
-        inviteCode: ""
+        inviteCode: "",
+        pause: null
       },
       isAuthenticated: false,
       currentUserId: null,
@@ -212,7 +213,8 @@
       household: {
         id: data.household?.id || data.id || null,
         name: data.household?.name || data.name || "HomeJob",
-        inviteCode: data.household?.inviteCode || data.inviteCode || ""
+        inviteCode: data.household?.inviteCode || data.inviteCode || "",
+        pause: normalizeHouseholdPause(data.household?.pause)
       },
       isAuthenticated: false,
       currentUserId: data.currentUserId,
@@ -315,6 +317,42 @@
     return Array.from(
       new Set(value.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))
     ).sort((a, b) => a - b);
+  }
+
+  function normalizeHouseholdPause(value) {
+    if (!value || !value.from || !value.until) {
+      return null;
+    }
+    const from = String(value.from);
+    const until = String(value.until);
+    if (from > until) {
+      return null;
+    }
+    return { from, until };
+  }
+
+  function isDateWithinPause(dateIso) {
+    const pause = state.household.pause;
+    return Boolean(pause && dateIso >= pause.from && dateIso <= pause.until);
+  }
+
+  function isHouseholdPausedNow() {
+    return isDateWithinPause(toISO(new Date()));
+  }
+
+  function countPausedDaysInRange(startDate, endDate) {
+    const pause = state.household.pause;
+    if (!pause) {
+      return 0;
+    }
+    const pauseStart = fromISO(pause.from);
+    const pauseEnd = fromISO(pause.until);
+    const overlapStart = pauseStart > startDate ? pauseStart : startDate;
+    const overlapEnd = pauseEnd < endDate ? pauseEnd : endDate;
+    if (overlapStart > overlapEnd) {
+      return 0;
+    }
+    return daysBetween(overlapStart, overlapEnd) + 1;
   }
 
   function saveState() {
@@ -864,6 +902,7 @@
       </div>
       ${activeModal === "task" ? renderTaskModal() : ""}
       ${activeModal === "login" ? renderLoginModal() : ""}
+      ${activeModal === "pause" ? renderPauseModal() : ""}
       ${notificationPanelOpen ? renderNotificationPanel() : ""}
     `;
   }
@@ -973,13 +1012,27 @@
   }
 
   function renderHouseholdBadge() {
+    const isPaused = isHouseholdPausedNow();
+    const hasPause = Boolean(state.household.pause);
+
     return `
-      <button class="household-badge household-switch-button" type="button" data-action="change-household" aria-label="Zmień gospodarstwo">
-        <strong>${escapeHtml(state.household.name)}</strong>
-        <span>${state.users.length} ${state.users.length === 1 ? "domownik" : "domowników"} · ${escapeHtml(
-          state.household.inviteCode
-        )}</span>
-      </button>
+      <div class="household-badge household-badge-row">
+        <button class="household-switch-button" type="button" data-action="change-household" aria-label="Zmień gospodarstwo">
+          <strong>${escapeHtml(state.household.name)}</strong>
+          <span>${state.users.length} ${state.users.length === 1 ? "domownik" : "domowników"} · ${escapeHtml(
+            state.household.inviteCode
+          )}</span>
+        </button>
+        <button
+          class="icon-button household-pause-button ${hasPause ? "is-active" : ""}"
+          type="button"
+          data-action="open-pause-modal"
+          aria-label="${isPaused ? "Zadania wstrzymane" : "Wstrzymaj zadania"}"
+          title="${isPaused ? "Zadania wstrzymane" : "Wstrzymaj zadania"}"
+        >
+          <span aria-hidden="true">${isPaused ? "▶" : "⏸"}</span>
+        </button>
+      </div>
     `;
   }
 
@@ -1152,6 +1205,50 @@
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
           ${renderLoginForm()}
+        </section>
+      </div>
+    `;
+  }
+
+  function renderPauseModal() {
+    const pause = state.household.pause;
+    const today = toISO(new Date());
+    const values = {
+      from: pause?.from || today,
+      until: pause?.until || today
+    };
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="pause-modal-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="pause-modal-title">${pause ? "Edytuj wstrzymanie" : "Wstrzymaj zadania"}</h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="task-form" data-form="pause">
+            <div class="form-grid">
+              <label>
+                <span class="label">Od</span>
+                <input class="input" type="date" name="pauseFrom" value="${escapeAttribute(values.from)}" required />
+              </label>
+              <label>
+                <span class="label">Do</span>
+                <input class="input" type="date" name="pauseUntil" value="${escapeAttribute(values.until)}" required />
+              </label>
+              <span class="form-hint wide">W tym czasie zadania nie wysyłają przypomnień ani nie naliczają zaległości, a cykliczne przesuwają się na termin po powrocie.</span>
+            </div>
+            ${
+              pause
+                ? `<div class="status-line" style="margin-top: 12px">
+                    <button class="ghost-button" type="button" data-action="resume-household">Wznów teraz</button>
+                  </div>`
+                : ""
+            }
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-action="close-modal">Anuluj</button>
+              <button class="button" type="submit">${pause ? "Zapisz zmiany" : "Wstrzymaj zadania"}</button>
+            </div>
+          </form>
         </section>
       </div>
     `;
@@ -2317,6 +2414,23 @@
       return;
     }
 
+    if (action === "open-pause-modal") {
+      activeModal = "pause";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      return;
+    }
+
+    if (action === "resume-household") {
+      state.household.pause = null;
+      activeModal = null;
+      saveState();
+      toast("Wznowiono zadania", "Przypomnienia i zaległości znów naliczają się normalnie.");
+      render();
+      return;
+    }
+
     if (action === "change-household") {
       rememberHousehold(state);
       clearSession();
@@ -2528,6 +2642,24 @@
 
     if (formType === "join-household") {
       joinHouseholdFromForm(form);
+      return;
+    }
+
+    if (formType === "pause") {
+      const data = new FormData(form);
+      const from = String(data.get("pauseFrom") || "");
+      const until = String(data.get("pauseUntil") || "");
+
+      if (!from || !until || from > until) {
+        toast("Sprawdź daty", "Data „Do” nie może być wcześniejsza niż „Od”.");
+        return;
+      }
+
+      state.household.pause = { from, until };
+      activeModal = null;
+      saveState();
+      toast("Wstrzymano zadania", `${formatHumanDate(from)} – ${formatHumanDate(until)}`);
+      render();
       return;
     }
 
@@ -3036,6 +3168,10 @@
   }
 
   function getDueReminderTasks() {
+    if (isHouseholdPausedNow()) {
+      return [];
+    }
+
     const now = new Date();
     const today = toISO(now);
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -3395,7 +3531,9 @@
       return 0;
     }
 
-    return daysBetween(startDate, endDate) + 1;
+    const totalDays = daysBetween(startDate, endDate) + 1;
+    const pausedDays = countPausedDaysInRange(startDate, endDate);
+    return Math.max(0, totalDays - pausedDays);
   }
 
   function getPointPeriodStart(date = new Date()) {
@@ -3634,7 +3772,12 @@
   function getNextValidDueDate(dateIso, recurrence) {
     let next = getNextDueDate(dateIso, recurrence.type);
     let guard = 0;
-    while (recurrence.skipWeekdays?.length && recurrence.skipWeekdays.includes(getIsoWeekday(next)) && guard < 14) {
+    while (guard < 400) {
+      const skippedWeekday = recurrence.skipWeekdays?.length && recurrence.skipWeekdays.includes(getIsoWeekday(next));
+      const pausedDay = isDateWithinPause(next);
+      if (!skippedWeekday && !pausedDay) {
+        break;
+      }
       next = getNextDueDate(next, recurrence.type);
       guard += 1;
     }

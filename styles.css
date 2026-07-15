@@ -136,15 +136,40 @@ a {
   text-align: left;
 }
 
+.household-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .household-switch-button {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  transition: opacity 0.18s ease;
 }
 
 .household-switch-button:hover {
+  opacity: 0.75;
+}
+
+.household-pause-button {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+}
+
+.household-pause-button.is-active {
   border-color: rgba(184, 95, 69, 0.42);
-  background: #fff3e2;
-  transform: translateY(-1px);
+  background: #fff0dc;
+  color: var(--teal-strong);
 }
 
 .household-badge strong {
@@ -154,7 +179,7 @@ a {
   font-size: 0.92rem;
 }
 
-.household-badge span {
+.household-switch-button span {
   margin-top: 3px;
   color: var(--muted);
   font-size: 0.78rem;
@@ -1998,8 +2023,14 @@ button.metric {
     font-size: 0.76rem;
   }
 
-  .topbar-brand .household-badge span {
+  .topbar-brand .household-badge .household-switch-button span {
     display: none;
+  }
+
+  .household-pause-button {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
   }
 
   .section-head,
