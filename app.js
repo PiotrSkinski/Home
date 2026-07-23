@@ -26,6 +26,8 @@
     { points: 350, label: "Duża nagroda" },
     { points: 500, label: "Super nagroda" }
   ];
+  const MONTHLY_GOAL = 500;
+  const CARRYOVER_DIVISOR = 4;
 
   const PRIORITY = {
     urgent: { label: "Bardzo wysoki", points: 25, className: "urgent" },
@@ -73,7 +75,8 @@
   let lastRemoteUpdatedAt = loadLastSyncedUpdatedAt();
 
   registerServiceWorker();
-  syncRewardClaims();
+  recomputeDerived();
+  persistLocalState(state);
   render();
   hydrateRemoteState();
   runReminderSweep();
@@ -93,7 +96,9 @@
         id: null,
         name: "HomeJob",
         inviteCode: "",
-        pause: null
+        pause: null,
+        homeBonus: null,
+        carryoverDonePeriod: null
       },
       isAuthenticated: false,
       currentUserId: null,
@@ -214,7 +219,9 @@
         id: data.household?.id || data.id || null,
         name: data.household?.name || data.name || "HomeJob",
         inviteCode: data.household?.inviteCode || data.inviteCode || "",
-        pause: normalizeHouseholdPause(data.household?.pause)
+        pause: normalizeHouseholdPause(data.household?.pause),
+        homeBonus: data.household?.homeBonus || null,
+        carryoverDonePeriod: data.household?.carryoverDonePeriod || null
       },
       isAuthenticated: false,
       currentUserId: data.currentUserId,
@@ -249,25 +256,34 @@
       ? nextState.currentUserId
       : nextState.users[0]?.id || null;
 
+    const validUserIds = new Set(nextState.users.map((user) => user.id));
     nextState.tasks = nextState.tasks.map((task) => {
       const recurrenceType = task.recurrence?.type === "seasonal" ? "quarterly" : task.recurrence?.type;
       const taskType = task.type === "shopping" ? "shopping" : "standard";
       const shoppingItems = normalizeShoppingItems(task.shoppingItems);
+      const rawAssignees = Array.isArray(task.assigneeIds) && task.assigneeIds.length ? task.assigneeIds : [task.assigneeId];
+      const assigneeIds = Array.from(new Set(rawAssignees.filter((id) => validUserIds.has(id))));
+      if (!assigneeIds.length) {
+        assigneeIds.push(nextState.users[0].id);
+      }
+      const status = task.status === "done" ? "done" : task.status === "skipped" ? "skipped" : "open";
 
       return {
         id: task.id || uid("task"),
         title: task.title || "Zadanie",
         type: taskType,
         room: task.room || (taskType === "shopping" ? "Zakupy" : "Inne"),
-        assigneeId: task.assigneeId || nextState.users[0].id,
+        assigneeId: assigneeIds[0],
+        assigneeIds,
         createdById: task.createdById || nextState.users[0].id,
         dueDate: task.dueDate || toISO(new Date()),
         reminderTime: task.reminderTime || "18:00",
         assignedAt: task.assignedAt || task.createdAt || `${task.dueDate || toISO(new Date())}T12:00:00.000Z`,
         priority: taskType === "shopping" ? "medium" : PRIORITY[task.priority] ? task.priority : "medium",
-        status: task.status === "done" ? "done" : "open",
+        status,
         completedAt: task.completedAt || null,
         completedById: task.completedById || null,
+        skippedById: task.skippedById || null,
         recurrence: {
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
           rotate: Boolean(task.recurrence?.rotate),
@@ -355,11 +371,49 @@
     return daysBetween(overlapStart, overlapEnd) + 1;
   }
 
+  function getAssigneeIds(task) {
+    if (Array.isArray(task?.assigneeIds) && task.assigneeIds.length) {
+      return task.assigneeIds;
+    }
+    return task?.assigneeId ? [task.assigneeId] : [];
+  }
+
+  function getAssignees(task) {
+    return getAssigneeIds(task).map((id) => getUser(id));
+  }
+
+  function isAssignee(task, userId) {
+    return getAssigneeIds(task).includes(userId);
+  }
+
+  function formatAssigneeNames(task) {
+    return getAssignees(task)
+      .map((user) => escapeHtml(user.name))
+      .join(", ");
+  }
+
+  function renderAssigneeAvatars(task, size = "small") {
+    return getAssignees(task)
+      .map((user) => avatar(user, size))
+      .join("");
+  }
+
+  function isSkipped(task) {
+    return task?.status === "skipped";
+  }
+
   function saveState() {
-    syncRewardClaims();
+    recomputeDerived();
     persistLocalState(state);
     rememberHousehold(state);
     queueRemoteSave();
+  }
+
+  function recomputeDerived() {
+    const carryoverChanged = processMonthlyCarryover();
+    const bonusChanged = refreshHomeBonus();
+    const claimsChanged = syncRewardClaims();
+    return carryoverChanged || bonusChanged || claimsChanged;
   }
 
   function persistLocalState(nextState) {
@@ -462,7 +516,7 @@
 
       state = applySession(normalizeState(payload.state));
       rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), payload.updatedAt);
-      const rewardClaimsChanged = syncRewardClaims();
+      const rewardClaimsChanged = recomputeDerived();
       persistLocalState(state);
       rememberHousehold(state);
 
@@ -539,7 +593,7 @@
 
       state = applySession(normalizeState(payload.state));
       rememberSyncedPayload(JSON.stringify(getRemoteStatePayload()), payload.updatedAt);
-      syncRewardClaims();
+      recomputeDerived();
       persistLocalState(state);
       rememberHousehold(state);
 
@@ -604,7 +658,7 @@
         console.warn("Nie udało się zapisać znacznika synchronizacji", error);
       }
     }
-    syncRewardClaims();
+    recomputeDerived();
     persistLocalState(state);
     rememberHousehold(state);
 
@@ -1280,8 +1334,8 @@
   }
 
   function renderDashboardView() {
-    const mineToday = state.tasks.filter((task) => task.assigneeId === state.currentUserId && isToday(task) && isOpen(task));
-    const mineOverdue = state.tasks.filter((task) => task.assigneeId === state.currentUserId && isOverdue(task));
+    const mineToday = state.tasks.filter((task) => isAssignee(task, state.currentUserId) && isToday(task) && isOpen(task));
+    const mineOverdue = state.tasks.filter((task) => isAssignee(task, state.currentUserId) && isOverdue(task));
     const homeToday = state.tasks.filter((task) => isToday(task) && isOpen(task));
     const weeklyPoints = getUserPoints(state.currentUserId, 7);
 
@@ -1420,6 +1474,7 @@
             ${filterButton("today", "Dziś")}
             ${filterButton("overdue", "Zaległe")}
             ${filterButton("done", "Ukończone")}
+            ${filterButton("done-today", "Ukończone dziś")}
           </div>
         </div>
 
@@ -1552,7 +1607,7 @@
   }
 
   function renderTeamView() {
-    const openTasks = state.tasks.filter((task) => task.status !== "done");
+    const openTasks = state.tasks.filter((task) => task.status === "open");
 
     return `
       <section class="view">
@@ -1573,7 +1628,7 @@
         <div class="people-grid">
           ${state.users
             .map((user) => {
-              const assigned = openTasks.filter((task) => task.assigneeId === user.id);
+              const assigned = openTasks.filter((task) => isAssignee(task, user.id));
               const overdue = assigned.filter((task) => isOverdue(task)).length;
               const today = assigned.filter((task) => isToday(task)).length;
               return `
@@ -1801,16 +1856,14 @@
   }
 
   function renderProjectedTaskCard(occurrence) {
-    const assignee = getUser(occurrence.assigneeId);
-
     return `
       <article class="task-card is-projected">
         <span class="task-check" aria-hidden="true">↻</span>
         <div>
           <h3 class="task-title">${escapeHtml(occurrence.title)}</h3>
           <div class="task-meta">
-            ${avatar(assignee, "small")}
-            <span>${escapeHtml(assignee.name)}</span>
+            ${renderAssigneeAvatars(occurrence)}
+            <span>${formatAssigneeNames(occurrence)}</span>
             <span>•</span>
             <span>${formatHumanDate(occurrence.dueDate)}</span>
             <span>•</span>
@@ -1843,23 +1896,25 @@
   }
 
   function renderTaskCard(task) {
-    const assignee = getUser(task.assigneeId);
+    const assignees = getAssignees(task);
     const shopping = isShoppingTask(task);
-    const completeDisabled =
-      task.status === "done" || task.assigneeId !== state.currentUserId || (shopping && !isShoppingResolved(task));
+    const closed = task.status === "done" || isSkipped(task);
+    const completeDisabled = closed || !isAssignee(task, state.currentUserId) || (shopping && !isShoppingResolved(task));
     const meta = [
       shopping
         ? `<span class="pill blue">Zakupy</span>`
         : `<span class="pill ${PRIORITY[task.priority].className}">${PRIORITY[task.priority].label}</span>`,
       isOverdue(task) ? `<span class="pill overdue">Zaległe</span>` : "",
       task.status === "done" ? `<span class="pill done">Ukończone</span>` : "",
+      isSkipped(task) ? `<span class="pill skipped">Nie było potrzeby</span>` : "",
+      assignees.length > 1 ? `<span class="pill blue">${assignees.length} osoby</span>` : "",
       task.recurrence.type !== "none" ? `<span class="pill blue">${RECURRENCE[task.recurrence.type]}</span>` : ""
     ]
       .filter(Boolean)
       .join("");
 
     return `
-      <article class="task-card ${task.status === "done" ? "is-done" : ""} ${
+      <article class="task-card ${closed ? "is-done" : ""} ${isSkipped(task) ? "is-skipped" : ""} ${
       selectedTaskId === task.id ? "is-selected" : ""
     }">
         <button class="task-check" type="button" data-action="complete-task" data-task-id="${task.id}" ${
@@ -1868,8 +1923,8 @@
         <div>
           <h3 class="task-title">${escapeHtml(task.title)}</h3>
           <div class="task-meta">
-            ${avatar(assignee, "small")}
-            <span>${escapeHtml(assignee.name)}</span>
+            ${renderAssigneeAvatars(task)}
+            <span>${formatAssigneeNames(task)}</span>
             <span>•</span>
             <span>${formatHumanDate(task.dueDate)}</span>
             <span>•</span>
@@ -1880,7 +1935,7 @@
         </div>
         <div class="task-actions">
           ${
-            task.assigneeId !== state.currentUserId && task.status !== "done"
+            !isAssignee(task, state.currentUserId) && !closed
               ? `<button class="quick-button" type="button" data-action="assign-me" data-task-id="${task.id}" aria-label="Przepisz na mnie">↙</button>`
               : ""
           }
@@ -1900,24 +1955,24 @@
       return renderInspectorFallback();
     }
 
-    const assignee = getUser(task.assigneeId);
     const creator = getUser(task.createdById);
-    const canComplete = task.status !== "done" && task.assigneeId === state.currentUserId;
+    const closed = task.status === "done" || isSkipped(task);
+    const canComplete = !closed && isAssignee(task, state.currentUserId);
     const overdueDays = getOverdueDays(task);
     const shopping = isShoppingTask(task);
+    const statusPill = task.status === "done" ? "done" : isSkipped(task) ? "skipped" : shopping ? "blue" : PRIORITY[task.priority].className;
+    const statusLabel = task.status === "done" ? "Ukończone" : isSkipped(task) ? "Nie było potrzeby" : shopping ? "Zakupy" : PRIORITY[task.priority].label;
 
     return `
       <div class="inspector-stack">
         <section class="detail-card">
           <div class="section-head">
             <h2>Szczegóły</h2>
-            <span class="pill ${task.status === "done" ? "done" : shopping ? "blue" : PRIORITY[task.priority].className}">
-              ${task.status === "done" ? "Ukończone" : shopping ? "Zakupy" : PRIORITY[task.priority].label}
-            </span>
+            <span class="pill ${statusPill}">${statusLabel}</span>
           </div>
           <h3 class="detail-title">${escapeHtml(task.title)}</h3>
           <div>
-            ${detailRow("Osoba", `${avatar(assignee, "small")}<span>${escapeHtml(assignee.name)}</span>`)}
+            ${detailRow("Osoba", `${renderAssigneeAvatars(task)}<span>${formatAssigneeNames(task)}</span>`)}
             ${detailRow("Termin", formatHumanDate(task.dueDate))}
             ${detailRow("Przypomn.", task.reminderTime)}
             ${detailRow("Punkty", getTaskPointsLabel(task))}
@@ -1935,13 +1990,20 @@
 
           <div class="split-actions">
             ${
-              task.status === "done"
-                ? `<button class="ghost-button" type="button" data-action="reopen-task" data-task-id="${task.id}">Cofnij ukończenie</button>`
+              closed
+                ? `<button class="ghost-button" type="button" data-action="reopen-task" data-task-id="${task.id}">${
+                    isSkipped(task) ? "Cofnij brak potrzeby" : "Cofnij ukończenie"
+                  }</button>`
                 : canComplete
                   ? `<button class="button" type="button" data-action="complete-task" data-task-id="${task.id}">${
                       shopping ? "Zakończ zakupy" : "Oznacz jako ukończone"
                     }</button>`
                   : `<button class="ghost-button" type="button" data-action="assign-me" data-task-id="${task.id}">Przepisz na mnie</button>`
+            }
+            ${
+              !closed && canComplete && !shopping
+                ? `<button class="ghost-button" type="button" data-action="skip-task" data-task-id="${task.id}">Nie ma potrzeby</button>`
+                : ""
             }
             <button class="ghost-button" type="button" data-action="edit-task" data-task-id="${task.id}">Edytuj</button>
             <button class="ghost-button" type="button" data-action="open-task-modal">Dodaj</button>
@@ -1953,18 +2015,24 @@
           <div class="section-head">
             <h3>Przypisanie</h3>
           </div>
-          <form class="split-actions" data-form="reassign" data-task-id="${task.id}">
-            <select class="select" name="assigneeId">
+          <form data-form="reassign" data-task-id="${task.id}">
+            <div class="weekday-picker">
               ${state.users
                 .map(
-                  (user) =>
-                    `<option value="${user.id}" ${user.id === task.assigneeId ? "selected" : ""}>${escapeHtml(
-                      user.name
-                    )}</option>`
+                  (user) => `
+                    <label class="chip weekday-chip">
+                      <input type="checkbox" name="assigneeId" value="${user.id}" ${
+                        isAssignee(task, user.id) ? "checked" : ""
+                      } />
+                      ${escapeHtml(user.name)}
+                    </label>
+                  `
                 )
                 .join("")}
-            </select>
-            <button class="ghost-button" type="submit">Zmień</button>
+            </div>
+            <div class="form-actions" style="margin-top: 10px">
+              <button class="ghost-button" type="submit">Zmień przypisanie</button>
+            </div>
           </form>
         </section>
 
@@ -2015,7 +2083,7 @@
   }
 
   function renderShoppingChecklist(task, variant = "") {
-    const canResolve = task.status !== "done" && task.assigneeId === state.currentUserId;
+    const canResolve = task.status === "open" && isAssignee(task, state.currentUserId);
     const summary = getShoppingSummary(task);
 
     return `
@@ -2085,6 +2153,23 @@
     `;
   }
 
+  function renderGoalHint() {
+    if (isHomeBonusActive()) {
+      return `<span class="form-hint goal-hint goal-hint-bonus">🎉 Premia domowa aktywna, punkty x2!</span>`;
+    }
+    const reached = state.users.filter((user) => hasReachedGoal(user.id));
+    if (!reached.length) {
+      return "";
+    }
+    const suggestion = getSuggestedAssignee();
+    const reachedNames = reached.map((user) => escapeHtml(user.name)).join(", ");
+    const suggestionText =
+      suggestion && !hasReachedGoal(suggestion.id) ? ` Rozważ przypisanie na: ${escapeHtml(suggestion.name)}.` : "";
+    return `<span class="form-hint goal-hint">${reachedNames} ${
+      reached.length > 1 ? "osiągnęli" : "osiągnął(-ęła)"
+    } cel ${MONTHLY_GOAL} pkt.${suggestionText}</span>`;
+  }
+
   function renderTaskModal() {
     const editingTask = editingTaskId ? getTask(editingTaskId) : null;
     const isEditing = Boolean(editingTask);
@@ -2093,7 +2178,7 @@
       title: editingTask?.title || (isShopping ? "Zakupy" : ""),
       dueDate: editingTask?.dueDate || selectedDate || toISO(new Date()),
       reminderTime: editingTask?.reminderTime || "18:00",
-      assigneeId: editingTask?.assigneeId || state.currentUserId,
+      assigneeIds: editingTask ? getAssigneeIds(editingTask) : [state.currentUserId],
       priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
       recurrenceType: RECURRENCE[editingTask?.recurrence?.type] ? editingTask.recurrence.type : "none",
       rotate: editingTask ? Boolean(editingTask.recurrence?.rotate) : true,
@@ -2128,18 +2213,23 @@
                 <span class="label">Przypomnienie</span>
                 <input class="input" type="time" name="reminderTime" value="${escapeAttribute(values.reminderTime)}" required />
               </label>
-              <label>
+              <label class="wide">
                 <span class="label">Osoba</span>
-                <select class="select" name="assigneeId" required>
+                <div class="weekday-picker">
                   ${state.users
                     .map(
-                      (user) =>
-                        `<option value="${user.id}" ${
-                          user.id === values.assigneeId ? "selected" : ""
-                        }>${escapeHtml(user.name)}</option>`
+                      (user) => `
+                        <label class="chip weekday-chip">
+                          <input type="checkbox" name="assigneeId" value="${user.id}" ${
+                            values.assigneeIds.includes(user.id) ? "checked" : ""
+                          } />
+                          ${escapeHtml(user.name)}
+                        </label>
+                      `
                     )
                     .join("")}
-                </select>
+                </div>
+                ${renderGoalHint()}
               </label>
               ${
                 isShopping
@@ -2243,13 +2333,13 @@
       <div class="mini-list">
         ${items
           .map((item) => {
-            const user = getUser(item.assigneeId);
+            const assignees = getAssignees(item);
             return `
               <button class="mini-item" type="button" data-action="select-task" data-task-id="${item.id}">
-                ${avatar(user, "small")}
+                ${avatar(assignees[0], "small")}
                 <span class="item-body">
                   <span class="item-title">${escapeHtml(item.title)}</span>
-                  <span class="item-text">${formatHumanDate(item.dueDate)} · ${item.reminderTime} · ${escapeHtml(user.name)}</span>
+                  <span class="item-text">${formatHumanDate(item.dueDate)} · ${item.reminderTime} · ${formatAssigneeNames(item)}</span>
                 </span>
               </button>
             `;
@@ -2285,7 +2375,17 @@
   }
 
   function renderPointResetNote() {
-    return `<p class="points-reset-note">Punkty resetują się 1. dnia każdego miesiąca.</p>`;
+    return `
+      ${renderHomeBonusBanner()}
+      <p class="points-reset-note">Punkty resetują się 1. dnia każdego miesiąca. Nadwyżka ponad ${MONTHLY_GOAL} pkt ÷ ${CARRYOVER_DIVISOR} wraca jako bonus w nowym miesiącu.</p>
+    `;
+  }
+
+  function renderHomeBonusBanner() {
+    if (!isHomeBonusActive()) {
+      return "";
+    }
+    return `<p class="home-bonus-banner">🎉 Premia domowa aktywna, punkty x2! Wszyscy przekroczyli ${MONTHLY_GOAL} pkt.</p>`;
   }
 
   function renderRewardAxis(points, variant = "") {
@@ -2534,8 +2634,12 @@
     }
 
     if (action === "assign-me") {
-      reassignTask(actionElement.dataset.taskId, state.currentUserId);
-      toast("Zadanie przepisane", "Możesz teraz oznaczyć je jako ukończone.");
+      reassignTask(actionElement.dataset.taskId, [state.currentUserId]);
+      return;
+    }
+
+    if (action === "skip-task") {
+      skipTask(actionElement.dataset.taskId);
       return;
     }
 
@@ -2673,7 +2777,7 @@
       const title = String(data.get("title")).trim() || (isShopping ? "Zakupy" : "");
       const dueDate = String(data.get("dueDate"));
       const reminderTime = String(data.get("reminderTime"));
-      const assigneeId = String(data.get("assigneeId"));
+      const assigneeIds = Array.from(new Set(data.getAll("assigneeId").map(String).filter((id) => getUserById(id))));
       const rawRecurrenceType = String(data.get("recurrenceType") || "none");
       const recurrenceType = RECURRENCE[rawRecurrenceType] ? rawRecurrenceType : "none";
       const skipWeekdays = normalizeSkipWeekdays(data.getAll("skipWeekday"));
@@ -2686,6 +2790,11 @@
         return;
       }
 
+      if (!assigneeIds.length) {
+        toast("Wybierz osobę", "Zaznacz przynajmniej jednego domownika.");
+        return;
+      }
+
       if (isShopping && !shoppingItems.length) {
         toast("Dodaj produkty", "Wpisz przynajmniej jeden produkt do kupienia.");
         return;
@@ -2695,12 +2804,13 @@
         const reminderChanged =
           editingTask.dueDate !== dueDate ||
           editingTask.reminderTime !== reminderTime ||
-          editingTask.assigneeId !== assigneeId;
+          getAssigneeIds(editingTask).join(",") !== assigneeIds.join(",");
 
         editingTask.title = title;
         editingTask.type = taskType;
         editingTask.room = isShopping ? "Zakupy" : editingTask.room || "Inne";
-        editingTask.assigneeId = assigneeId;
+        editingTask.assigneeIds = assigneeIds;
+        editingTask.assigneeId = assigneeIds[0];
         editingTask.dueDate = dueDate;
         editingTask.reminderTime = reminderTime;
         editingTask.priority = priority;
@@ -2732,7 +2842,8 @@
         title,
         type: taskType,
         room: isShopping ? "Zakupy" : "Inne",
-        assigneeId,
+        assigneeIds,
+        assigneeId: assigneeIds[0],
         createdById: state.currentUserId,
         dueDate,
         reminderTime,
@@ -2741,6 +2852,7 @@
         status: "open",
         completedAt: null,
         completedById: null,
+        skippedById: null,
         recurrence: {
           type: recurrenceType,
           rotate: data.has("rotate"),
@@ -2755,6 +2867,7 @@
 
       state.tasks.unshift(task);
       notifyNewTask(task);
+      maybeSuggestReassign(task);
       selectedTaskId = task.id;
       selectedDate = task.dueDate;
       calendarCursor = startOfMonth(fromISO(task.dueDate));
@@ -2791,8 +2904,12 @@
     }
 
     if (formType === "reassign") {
-      const assigneeId = String(new FormData(form).get("assigneeId"));
-      reassignTask(form.dataset.taskId, assigneeId);
+      const assigneeIds = new FormData(form).getAll("assigneeId").map(String);
+      if (!assigneeIds.length) {
+        toast("Wybierz osobę", "Zadanie musi mieć przynajmniej jednego domownika.");
+        return;
+      }
+      reassignTask(form.dataset.taskId, assigneeIds);
       return;
     }
 
@@ -2821,7 +2938,7 @@
       return;
     }
 
-    if (task.assigneeId !== state.currentUserId) {
+    if (!isAssignee(task, state.currentUserId)) {
       toast("Najpierw przepisz zadanie", "Ukończenie jest dostępne dla osoby przypisanej.");
       selectedTaskId = task.id;
       render();
@@ -2837,11 +2954,17 @@
 
     const overdueDays = getOverdueDays(task);
     const earnedPoints = getTaskPoints(task);
+    const assigneeCount = getAssigneeIds(task).length;
+    const perPerson = earnedPoints / assigneeCount;
     task.points = getTaskPotentialPoints(task);
     task.status = "done";
     task.completedAt = new Date().toISOString();
     task.completedById = state.currentUserId;
-    task.history.push(historyEntry(`Ukończono zadanie za ${formatPoints(earnedPoints)} pkt`, state.currentUserId));
+    const shareText =
+      assigneeCount > 1
+        ? ` (${formatPoints(perPerson)} pkt/os. dla ${assigneeCount} domowników)`
+        : "";
+    task.history.push(historyEntry(`Ukończono zadanie za ${formatPoints(earnedPoints)} pkt${shareText}`, state.currentUserId));
     completeRewardClaim(task);
     if (overdueDays > 0) {
       task.history.push(historyEntry(`Kara za zwłokę: -${overdueDays * 10} pkt`, state.currentUserId));
@@ -2859,7 +2982,39 @@
       toast("Zakupy zakończone", `Zdobyto ${formatPoints(earnedPoints)} pkt.`);
     } else {
       const penaltyText = overdueDays ? `, kara za zwłokę -${overdueDays * 10} pkt` : "";
-      toast("Zadanie ukończone", `Zdobyto ${formatPoints(earnedPoints)} pkt${penaltyText}.`);
+      toast("Zadanie ukończone", `Zdobyto ${formatPoints(assigneeCount > 1 ? perPerson : earnedPoints)} pkt${penaltyText}.`);
+    }
+
+    saveState();
+    render();
+  }
+
+  function skipTask(taskId) {
+    const task = getTask(taskId);
+    if (!task || task.status === "done" || isSkipped(task)) {
+      return;
+    }
+
+    if (!isAssignee(task, state.currentUserId)) {
+      toast("Najpierw przepisz zadanie", "Tylko osoba przypisana może oznaczyć brak potrzeby.");
+      selectedTaskId = task.id;
+      render();
+      return;
+    }
+
+    task.status = "skipped";
+    task.completedAt = new Date().toISOString();
+    task.skippedById = state.currentUserId;
+    task.history.push(historyEntry("Oznaczono: nie było potrzeby (0 pkt)", state.currentUserId));
+    selectedTaskId = task.id;
+
+    if (task.recurrence.type !== "none" && !task.isRewardTask) {
+      const nextTask = createNextRecurringTask(task);
+      task.nextRecurringTaskId = nextTask.id;
+      state.tasks.unshift(nextTask);
+      toast("Nie było potrzeby", `Bez punktów. Kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`);
+    } else {
+      toast("Nie było potrzeby", "Zadanie zamknięte bez punktów.");
     }
 
     saveState();
@@ -2872,14 +3027,16 @@
       return;
     }
 
+    const wasSkipped = isSkipped(task);
     task.status = "open";
     task.completedAt = null;
     task.completedById = null;
+    task.skippedById = null;
     reopenRewardClaim(task);
     const removedNextTask = removeGeneratedRecurringTask(task);
-    task.history.push(historyEntry("Przywrócono zadanie", state.currentUserId));
+    task.history.push(historyEntry(wasSkipped ? "Cofnięto brak potrzeby" : "Przywrócono zadanie", state.currentUserId));
     saveState();
-    toast("Cofnięto ukończenie", removedNextTask ? "Usunięto też kolejny termin z cyklu." : task.title);
+    toast(wasSkipped ? "Cofnięto brak potrzeby" : "Cofnięto ukończenie", removedNextTask ? "Usunięto też kolejny termin z cyklu." : task.title);
     render();
   }
 
@@ -2916,57 +3073,65 @@
     render();
   }
 
-  function reassignTask(taskId, assigneeId) {
+  function reassignTask(taskId, assigneeIds) {
     const task = getTask(taskId);
-    if (!task || task.assigneeId === assigneeId) {
+    const nextIds = Array.from(new Set((Array.isArray(assigneeIds) ? assigneeIds : [assigneeIds]).filter((id) => getUserById(id))));
+    if (!task || !nextIds.length) {
       render();
       return;
     }
 
-    const previousAssigneeId = task.assigneeId;
-    const oldUser = getUser(task.assigneeId);
-    const nextUser = getUser(assigneeId);
+    const previousIds = getAssigneeIds(task);
+    if (previousIds.length === nextIds.length && previousIds.every((id) => nextIds.includes(id))) {
+      render();
+      return;
+    }
+
     const settledOverdueDays = getOverdueDays(task);
     if (settledOverdueDays > 0) {
-      addPointEvent({
-        userId: previousAssigneeId,
-        taskId: task.id,
-        delta: -settledOverdueDays * 10,
-        type: "overdue",
-        text: `Kara za ${settledOverdueDays} dni zwłoki przed przepisaniem zadania`
+      const penaltyPer = (settledOverdueDays * 10) / previousIds.length;
+      previousIds.forEach((prevId) => {
+        addPointEvent({
+          userId: prevId,
+          taskId: task.id,
+          delta: -penaltyPer,
+          type: "overdue",
+          text: `Kara za ${settledOverdueDays} dni zwłoki przed przepisaniem zadania`
+        });
       });
     }
 
-    task.assigneeId = assigneeId;
+    task.assigneeIds = nextIds;
+    task.assigneeId = nextIds[0];
     task.assignedAt = new Date().toISOString();
-    task.history.push(historyEntry(`Przepisano z ${oldUser.name} na ${nextUser.name}`, state.currentUserId));
-    if (settledOverdueDays > 0) {
-      task.history.push(historyEntry(`Rozliczono zwłokę ${oldUser.name}: -${settledOverdueDays * 10} pkt`, previousAssigneeId));
-    }
+    const nextNames = nextIds.map((id) => getUser(id).name).join(", ");
+    task.history.push(historyEntry(`Zmieniono przypisanie na: ${nextNames}`, state.currentUserId));
 
-    if (assigneeId === state.currentUserId && previousAssigneeId !== state.currentUserId) {
+    const wasMine = previousIds.includes(state.currentUserId);
+    const isMine = nextIds.includes(state.currentUserId);
+    if (isMine && !wasMine) {
       addPointEvent({
         userId: state.currentUserId,
         taskId: task.id,
         delta: 10,
         type: "take",
-        text: `Przejęto zadanie od ${oldUser.name}`
+        text: "Przejęto zadanie"
       });
       task.history.push(historyEntry("Bonus za przejęcie zadania: +10 pkt", state.currentUserId));
-    } else if (previousAssigneeId === state.currentUserId && assigneeId !== state.currentUserId) {
+    } else if (wasMine && !isMine) {
       addPointEvent({
         userId: state.currentUserId,
         taskId: task.id,
         delta: -10,
         type: "give",
-        text: `Oddano zadanie osobie: ${nextUser.name}`
+        text: "Oddano zadanie"
       });
       task.history.push(historyEntry("Kara za oddanie zadania: -10 pkt", state.currentUserId));
     }
 
     selectedTaskId = task.id;
     saveState();
-    toast("Przypisanie zmienione", `${task.title} → ${nextUser.name}`);
+    toast("Przypisanie zmienione", `${task.title} → ${nextNames}`);
     render();
   }
 
@@ -2978,13 +3143,19 @@
 
     const removedUser = getUser(userId);
     const remainingUsers = state.users.filter((user) => user.id !== userId);
-    const openTasks = state.tasks.filter((task) => task.status !== "done" && task.assigneeId === userId);
+    const affectedTasks = state.tasks.filter((task) => task.status !== "done" && isAssignee(task, userId));
 
-    openTasks.forEach((task) => {
-      const nextUser = pickUserForRedistributedTask(remainingUsers);
-      task.assigneeId = nextUser.id;
+    affectedTasks.forEach((task) => {
+      const remainingAssignees = getAssigneeIds(task).filter((id) => id !== userId);
+      if (remainingAssignees.length) {
+        task.assigneeIds = remainingAssignees;
+      } else {
+        const nextUser = pickUserForRedistributedTask(remainingUsers);
+        task.assigneeIds = [nextUser.id];
+        task.history.push(historyEntry(`Przeniesiono po usunięciu: ${removedUser.name} → ${nextUser.name}`, state.currentUserId));
+      }
+      task.assigneeId = task.assigneeIds[0];
       task.assignedAt = new Date().toISOString();
-      task.history.push(historyEntry(`Przeniesiono po usunięciu: ${removedUser.name} → ${nextUser.name}`, state.currentUserId));
     });
 
     state.users = remainingUsers;
@@ -2997,7 +3168,7 @@
 
     rememberHousehold(state);
     saveState();
-    toast("Usunięto domownika", openTasks.length ? "Otwarte zadania zostały rozdzielone." : removedUser.name);
+    toast("Usunięto domownika", affectedTasks.length ? "Otwarte zadania zostały rozdzielone." : removedUser.name);
     render();
   }
 
@@ -3005,8 +3176,13 @@
     const workload = new Map(users.map((user) => [user.id, 0]));
 
     state.tasks.forEach((task) => {
-      if (task.status !== "done" && workload.has(task.assigneeId)) {
-        workload.set(task.assigneeId, workload.get(task.assigneeId) + getTaskPotentialPoints(task));
+      if (task.status !== "done") {
+        const share = getTaskPotentialPoints(task) / getAssigneeIds(task).length;
+        getAssigneeIds(task).forEach((id) => {
+          if (workload.has(id)) {
+            workload.set(id, workload.get(id) + share);
+          }
+        });
       }
     });
 
@@ -3017,7 +3193,9 @@
 
   function createNextRecurringTask(task) {
     const dueDate = getNextValidDueDate(task.dueDate, task.recurrence);
-    const assigneeId = task.recurrence.rotate ? getNextUserId(task.assigneeId) : task.assigneeId;
+    const assigneeIds = task.recurrence.rotate
+      ? Array.from(new Set(getAssigneeIds(task).map((id) => getNextUserId(id))))
+      : getAssigneeIds(task).slice();
     const shoppingItems = isShoppingTask(task)
       ? task.shoppingItems.map((item) => ({
           ...item,
@@ -3028,12 +3206,14 @@
     const nextTask = {
       ...task,
       id: uid("task"),
-      assigneeId,
+      assigneeIds,
+      assigneeId: assigneeIds[0],
       dueDate,
       status: "open",
       assignedAt: new Date().toISOString(),
       completedAt: null,
       completedById: null,
+      skippedById: null,
       points: isShoppingTask(task) ? getShoppingPotentialPoints(shoppingItems) : task.points,
       shoppingItems,
       comments: [],
@@ -3135,6 +3315,20 @@
     state.notifications = state.notifications.slice(0, 30);
   }
 
+  function maybeSuggestReassign(task) {
+    if (isHomeBonusActive()) {
+      return;
+    }
+    const assigneeIds = getAssigneeIds(task);
+    if (!assigneeIds.every((id) => hasReachedGoal(id))) {
+      return;
+    }
+    const suggestion = getSuggestedAssignee();
+    if (suggestion && !assigneeIds.includes(suggestion.id) && !hasReachedGoal(suggestion.id)) {
+      toast("Cel osiągnięty", `Rozważ przypisanie kolejnych zadań na: ${suggestion.name}.`);
+    }
+  }
+
   function runReminderSweep() {
     const dueTasks = getDueReminderTasks();
     if (!dueTasks.length) {
@@ -3142,16 +3336,15 @@
     }
 
     dueTasks.forEach((task) => {
-      const assignee = getUser(task.assigneeId);
       const title = isOverdue(task) ? "Zaległe zadanie" : "Zadanie na dziś";
-      const body = `${task.title} · ${assignee.name} · ${task.reminderTime}`;
+      const body = `${task.title} · ${formatAssigneeNames(task)} · ${task.reminderTime}`;
 
       state.notifications.unshift({
         id: uid("notification"),
         taskId: task.id,
         title,
         body,
-        recipientUserId: task.assigneeId,
+        recipientUserId: state.currentUserId,
         read: false,
         createdAt: new Date().toISOString()
       });
@@ -3177,7 +3370,7 @@
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
     return state.tasks.filter((task) => {
-      if (task.status === "done" || !task.reminderTime || task.assigneeId !== state.currentUserId) {
+      if (task.status !== "open" || !task.reminderTime || !isAssignee(task, state.currentUserId)) {
         return false;
       }
 
@@ -3258,24 +3451,26 @@
     let tasks = [...state.tasks];
 
     if (activeFilter === "mine") {
-      tasks = tasks.filter((task) => task.assigneeId === state.currentUserId);
+      tasks = tasks.filter((task) => isAssignee(task, state.currentUserId));
     } else if (activeFilter === "mine-today") {
-      tasks = tasks.filter((task) => task.assigneeId === state.currentUserId && isToday(task) && task.status !== "done");
+      tasks = tasks.filter((task) => isAssignee(task, state.currentUserId) && isToday(task) && task.status === "open");
     } else if (activeFilter === "mine-overdue") {
-      tasks = tasks.filter((task) => task.assigneeId === state.currentUserId && isOverdue(task));
+      tasks = tasks.filter((task) => isAssignee(task, state.currentUserId) && isOverdue(task));
     } else if (activeFilter === "today") {
-      tasks = tasks.filter((task) => isToday(task) && task.status !== "done");
+      tasks = tasks.filter((task) => isToday(task) && task.status === "open");
     } else if (activeFilter === "overdue") {
       tasks = tasks.filter((task) => isOverdue(task));
     } else if (activeFilter === "done") {
       tasks = tasks.filter((task) => task.status === "done");
+    } else if (activeFilter === "done-today") {
+      tasks = tasks.filter((task) => task.status === "done" && task.completedAt && toISO(new Date(task.completedAt)) === toISO(new Date()));
     }
 
     if (searchQuery.trim()) {
       const query = searchQuery.trim().toLocaleLowerCase("pl-PL");
       tasks = tasks.filter((task) =>
         `${task.title} ${isShoppingTask(task) ? "zakupy " + shoppingItemsToText(task.shoppingItems) : ""} ${
-          getUser(task.assigneeId).name
+          getAssignees(task).map((user) => user.name).join(" ")
         }`
           .toLocaleLowerCase("pl-PL")
           .includes(query)
@@ -3321,7 +3516,7 @@
           taskId: task.id
         }))
       )
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   }
 
   function isShoppingTask(task) {
@@ -3419,7 +3614,12 @@
 
   function getTaskPointsLabel(task) {
     if (!isShoppingTask(task)) {
-      return `${formatPoints(getTaskPoints(task))} pkt`;
+      const total = getTaskPoints(task);
+      const count = getAssigneeIds(task).length;
+      if (count > 1) {
+        return `${formatPoints(total)} pkt (${formatPoints(total / count)} pkt/os. × ${count})`;
+      }
+      return `${formatPoints(total)} pkt`;
     }
 
     return `${formatPoints(getShoppingCurrentPoints(task))} / ${formatPoints(getShoppingPotentialPoints(task.shoppingItems))} pkt`;
@@ -3441,7 +3641,7 @@
       return;
     }
 
-    if (task.assigneeId !== state.currentUserId) {
+    if (!isAssignee(task, state.currentUserId)) {
       toast("To nie Twoje zakupy", "Najpierw przepisz zadanie na siebie.");
       render();
       return;
@@ -3474,11 +3674,11 @@
     updateShoppingItemStatus(taskId, itemId, item.status === "unavailable" ? "pending" : "unavailable");
   }
 
-  function getUserPoints(userId, lastDays = null) {
+  function getBaseUserPoints(userId, lastDays = null) {
     const completedPoints = state.tasks
-      .filter((task) => task.status === "done" && task.completedById === userId)
+      .filter((task) => task.status === "done" && isAssignee(task, userId))
       .filter((task) => (lastDays ? isWithinLastDays(task.completedAt, lastDays) : isInCurrentPointPeriod(task.completedAt)))
-      .reduce((sum, task) => sum + getTaskPoints(task), 0);
+      .reduce((sum, task) => sum + getTaskPoints(task) / getAssigneeIds(task).length, 0);
 
     const transferPoints = state.pointEvents
       .filter((event) => event.userId === userId)
@@ -3486,24 +3686,123 @@
       .reduce((sum, event) => sum + event.delta, 0);
 
     const overduePenalty = state.tasks.reduce((sum, task) => {
-      const penaltyUserId = getPenaltyUserId(task);
-      if (penaltyUserId !== userId) {
+      const penaltyIds = getPenaltyUserIds(task);
+      if (!penaltyIds.includes(userId)) {
         return sum;
       }
-      return sum - getOverdueDays(task, lastDays || "month") * 10;
+      return sum - (getOverdueDays(task, lastDays || "month") * 10) / penaltyIds.length;
     }, 0);
 
     return completedPoints + transferPoints + overduePenalty;
   }
 
-  function getPenaltyUserId(task) {
-    if (task.status === "done") {
-      return task.completedById || task.assigneeId;
+  function getUserPoints(userId, lastDays = null) {
+    const base = getBaseUserPoints(userId, lastDays);
+    if (lastDays == null && isHomeBonusActive()) {
+      return base * 2;
     }
-    return task.assigneeId;
+    return base;
+  }
+
+  function getPenaltyUserIds(task) {
+    if (isSkipped(task)) {
+      return [];
+    }
+    if (task.status === "done") {
+      return getAssigneeIds(task);
+    }
+    return getAssigneeIds(task);
+  }
+
+  function hasReachedGoal(userId) {
+    return getBaseUserPoints(userId) >= MONTHLY_GOAL;
+  }
+
+  function isHomeBonusActive() {
+    return Boolean(state.household.homeBonus && state.household.homeBonus === getPointPeriodKey());
+  }
+
+  function refreshHomeBonus() {
+    if (state.users.length < 2) {
+      return false;
+    }
+    const currentPeriod = getPointPeriodKey();
+    if (state.household.homeBonus === currentPeriod) {
+      return false;
+    }
+    const everyoneReached = state.users.every((user) => getBaseUserPoints(user.id) >= MONTHLY_GOAL);
+    if (everyoneReached) {
+      state.household.homeBonus = currentPeriod;
+      return true;
+    }
+    return false;
+  }
+
+  function getSuggestedAssignee(excludeUserId = null) {
+    return state.users
+      .filter((user) => user.id !== excludeUserId)
+      .map((user) => ({ user, points: getBaseUserPoints(user.id) }))
+      .sort((a, b) => a.points - b.points)[0]?.user;
+  }
+
+  function processMonthlyCarryover() {
+    if (!state.users.length) {
+      return false;
+    }
+    const currentPeriod = getPointPeriodKey();
+    if (state.household.carryoverDonePeriod === currentPeriod) {
+      return false;
+    }
+
+    const prevPeriodDate = new Date(getPointPeriodStart().getTime() - 24 * 60 * 60 * 1000);
+    const prevPeriod = getPointPeriodKey(prevPeriodDate);
+    let changed = false;
+
+    state.users.forEach((user) => {
+      const prevTotal = getPeriodEarnedPoints(user.id, prevPeriod);
+      const overflow = Math.max(0, prevTotal - MONTHLY_GOAL);
+      const bonus = Math.floor(overflow / CARRYOVER_DIVISOR);
+      if (bonus <= 0) {
+        return;
+      }
+      const eventId = `carryover-${user.id}-${currentPeriod}`;
+      if (state.pointEvents.some((event) => event.id === eventId)) {
+        return;
+      }
+      state.pointEvents.unshift({
+        id: eventId,
+        userId: user.id,
+        taskId: null,
+        delta: bonus,
+        type: "carryover",
+        text: `Bonus z poprzedniego miesiąca (nadwyżka ${formatPoints(overflow)} pkt ÷ ${CARRYOVER_DIVISOR})`,
+        createdAt: new Date().toISOString()
+      });
+      changed = true;
+    });
+
+    state.household.carryoverDonePeriod = currentPeriod;
+    return changed || true;
+  }
+
+  function getPeriodEarnedPoints(userId, periodKey) {
+    const completedPoints = state.tasks
+      .filter((task) => task.status === "done" && isAssignee(task, userId))
+      .filter((task) => getPointPeriodKey(task.completedAt) === periodKey)
+      .reduce((sum, task) => sum + getTaskPoints(task) / getAssigneeIds(task).length, 0);
+
+    const transferPoints = state.pointEvents
+      .filter((event) => event.userId === userId && event.type !== "carryover")
+      .filter((event) => getPointPeriodKey(event.createdAt) === periodKey)
+      .reduce((sum, event) => sum + event.delta, 0);
+
+    return completedPoints + transferPoints;
   }
 
   function getOverdueDays(task, lastDays = null) {
+    if (isSkipped(task) || task.isRewardTask) {
+      return 0;
+    }
     const dueDate = fromISO(task.dueDate);
     const assignedDate = task.assignedAt ? fromISO(toISO(new Date(task.assignedAt))) : dueDate;
     const penaltyBaseDate = assignedDate > dueDate ? assignedDate : dueDate;
@@ -3645,6 +3944,7 @@
       title: `Przyznaj nagrodę dla ${rewardedUser.name}`,
       room: "Nagrody",
       assigneeId: assignee.id,
+      assigneeIds: [assignee.id],
       createdById: rewardedUser.id,
       dueDate,
       reminderTime: "09:00",
@@ -3653,6 +3953,7 @@
       status: "open",
       completedAt: null,
       completedById: null,
+      skippedById: null,
       recurrence: { type: "none", rotate: false },
       points: 5,
       isRewardTask: true,
@@ -3796,13 +4097,13 @@
     const byDay = new Map();
 
     state.tasks.forEach((task) => {
-      if (task.status === "done" || task.recurrence.type === "none" || task.isRewardTask || isShoppingTask(task)) {
+      if (task.status !== "open" || task.recurrence.type === "none" || task.isRewardTask || isShoppingTask(task)) {
         return;
       }
 
       const horizon = toISO(addDays(fromISO(task.dueDate), RECURRING_PROJECTION_DAYS));
       let dueDate = task.dueDate;
-      let assigneeId = task.assigneeId;
+      let assigneeIds = getAssigneeIds(task);
       let guard = 0;
 
       while (guard < 500) {
@@ -3812,7 +4113,9 @@
           break;
         }
 
-        assigneeId = task.recurrence.rotate ? getNextUserId(assigneeId) : assigneeId;
+        assigneeIds = task.recurrence.rotate
+          ? Array.from(new Set(assigneeIds.map((id) => getNextUserId(id))))
+          : assigneeIds;
 
         if (dueDate >= rangeStartIso) {
           const occurrence = {
@@ -3821,7 +4124,8 @@
             title: task.title,
             dueDate,
             reminderTime: task.reminderTime,
-            assigneeId,
+            assigneeIds,
+            assigneeId: assigneeIds[0],
             priority: task.priority,
             recurrence: task.recurrence,
             isProjected: true
@@ -3839,7 +4143,7 @@
 
   function pickInitialTaskId() {
     const current = state.tasks
-      ?.filter((task) => task.assigneeId === state.currentUserId && task.status !== "done")
+      ?.filter((task) => isAssignee(task, state.currentUserId) && task.status === "open")
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
     return current?.id || state.tasks?.[0]?.id || null;
   }
@@ -3860,8 +4164,12 @@
     return state.users.find((user) => user.id === userId) || state.users[0];
   }
 
+  function getUserById(userId) {
+    return state.users.find((user) => user.id === userId) || null;
+  }
+
   function isOpen(task) {
-    return task.status !== "done";
+    return task.status === "open";
   }
 
   function isToday(task) {
@@ -3869,7 +4177,7 @@
   }
 
   function isOverdue(task) {
-    return task.status !== "done" && task.dueDate < toISO(new Date());
+    return task.status === "open" && task.dueDate < toISO(new Date());
   }
 
   function isWithinLastDays(dateString, days) {

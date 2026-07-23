@@ -648,6 +648,27 @@ button.metric {
   line-height: 1.35;
 }
 
+.home-bonus-banner {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  color: #5c3550;
+  background: #f1e2ec;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.goal-hint {
+  display: block;
+  margin-top: 6px;
+}
+
+.goal-hint-bonus {
+  color: #5c3550;
+  font-weight: 800;
+}
+
 .reward-dashboard-section {
   margin-top: -4px;
 }
@@ -1083,6 +1104,19 @@ button.metric {
 .pill.blue {
   color: #385b97;
   background: #e6eefb;
+}
+
+.pill.skipped {
+  color: #6b6357;
+  background: #ece6dc;
+}
+
+.task-card.is-skipped {
+  opacity: 0.72;
+}
+
+.task-card.is-skipped .task-title {
+  text-decoration: none;
 }
 
 .task-actions {

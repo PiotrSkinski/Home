@@ -35,7 +35,10 @@ async function runReminderJob(env) {
     }
 
     const householdId = state.household?.id || row.id;
-    const openTasks = state.tasks.filter((task) => task.status !== "done");
+    if (isHouseholdPaused(state, localNow.date)) {
+      continue;
+    }
+    const openTasks = state.tasks.filter((task) => task.status === "open");
 
     if (isWithinTimeWindow(localNow.minutes, timeToMinutes(DAILY_DIGEST_TIME), DAILY_DIGEST_WINDOW_MINUTES)) {
       await sendDailyDigest(env, householdId, state, openTasks, localNow);
@@ -49,9 +52,21 @@ async function runReminderJob(env) {
   }
 }
 
+function taskAssignees(task) {
+  if (Array.isArray(task.assigneeIds) && task.assigneeIds.length) {
+    return task.assigneeIds;
+  }
+  return task.assigneeId ? [task.assigneeId] : [];
+}
+
+function isHouseholdPaused(state, todayIso) {
+  const pause = state.household?.pause;
+  return Boolean(pause && pause.from && pause.until && todayIso >= pause.from && todayIso <= pause.until);
+}
+
 async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
   for (const user of state.users) {
-    const tasks = openTasks.filter((task) => task.assigneeId === user.id && task.dueDate === localNow.date);
+    const tasks = openTasks.filter((task) => taskAssignees(task).includes(user.id) && task.dueDate === localNow.date);
     if (!tasks.length) {
       continue;
     }
@@ -81,23 +96,25 @@ async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
 
   for (const task of dueTasks) {
     const isOverdue = task.dueDate < localNow.date;
-    await pushToUser(env, householdId, task.assigneeId, {
-      kind: "task",
-      dedupeKey: `${householdId}:${task.assigneeId}:task:${task.id}:${localNow.date}:${task.reminderTime}`,
-      title: isOverdue ? "Zaległe zadanie" : "Czas na zadanie",
-      body: isOverdue
-        ? `To nadal czeka: ${task.title}`
-        : `Masz zadanie do wykonania: ${task.title}`,
-      url: `./index.html?task=${encodeURIComponent(task.id)}`,
-      tag: `homejob-task-${task.id}-${localNow.date}`,
-      taskId: task.id
-    });
+    for (const assigneeId of taskAssignees(task)) {
+      await pushToUser(env, householdId, assigneeId, {
+        kind: "task",
+        dedupeKey: `${householdId}:${assigneeId}:task:${task.id}:${localNow.date}:${task.reminderTime}`,
+        title: isOverdue ? "Zaległe zadanie" : "Czas na zadanie",
+        body: isOverdue
+          ? `To nadal czeka: ${task.title}`
+          : `Masz zadanie do wykonania: ${task.title}`,
+        url: `./index.html?task=${encodeURIComponent(task.id)}`,
+        tag: `homejob-task-${task.id}-${localNow.date}`,
+        taskId: task.id
+      });
+    }
   }
 }
 
 async function sendEveningReminder(env, householdId, state, openTasks, localNow) {
   for (const user of state.users) {
-    const tasks = openTasks.filter((task) => task.assigneeId === user.id && task.dueDate === localNow.date);
+    const tasks = openTasks.filter((task) => taskAssignees(task).includes(user.id) && task.dueDate === localNow.date);
     if (!tasks.length) {
       continue;
     }
