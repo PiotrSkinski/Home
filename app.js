@@ -1768,6 +1768,7 @@
               <h2>Ranking</h2>
             </div>
             ${renderLeaderboard()}
+            ${renderTaskCountSummary()}
             ${renderPointResetNote()}
           </section>
 
@@ -2351,7 +2352,7 @@
 
   function renderLeaderboard() {
     const rows = state.users
-      .map((user) => ({ user, points: getUserPoints(user.id) }))
+      .map((user) => ({ user, points: getUserPoints(user.id), counts: getUserTaskCounts(user.id) }))
       .sort((a, b) => b.points - a.points);
 
     return `
@@ -2363,6 +2364,7 @@
                 ${avatar(row.user)}
                 <div class="leader-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
+                  <span class="compact-meta">${row.counts.today} dziś · ${row.counts.week} w tygodniu · ${row.counts.month} w miesiącu</span>
                   ${renderRewardAxis(row.points)}
                 </div>
                 <div class="person-points">${formatPoints(row.points)} pkt</div>
@@ -2372,6 +2374,30 @@
           .join("")}
       </div>
     `;
+  }
+
+  function getUserTaskCounts(userId) {
+    const doneTasks = state.tasks.filter((task) => task.status === "done" && isAssignee(task, userId));
+    const today = toISO(new Date());
+    return {
+      today: doneTasks.filter((task) => task.completedAt && toISO(new Date(task.completedAt)) === today).length,
+      week: doneTasks.filter((task) => isWithinLastDays(task.completedAt, 7)).length,
+      month: doneTasks.filter((task) => isInCurrentPointPeriod(task.completedAt)).length
+    };
+  }
+
+  function getHouseholdTaskCounts() {
+    const doneTasks = state.tasks.filter((task) => task.status === "done");
+    return {
+      total: doneTasks.length,
+      week: doneTasks.filter((task) => isWithinLastDays(task.completedAt, 7)).length,
+      month: doneTasks.filter((task) => isInCurrentPointPeriod(task.completedAt)).length
+    };
+  }
+
+  function renderTaskCountSummary() {
+    const counts = getHouseholdTaskCounts();
+    return `<p class="points-reset-note">Zadania w domu: ${counts.total} od początku · ${counts.week} z 7 dni · ${counts.month} od początku miesiąca.</p>`;
   }
 
   function renderPointResetNote() {
@@ -3192,7 +3218,7 @@
   }
 
   function createNextRecurringTask(task) {
-    const dueDate = getNextValidDueDate(task.dueDate, task.recurrence);
+    const dueDate = getCaughtUpDueDate(getNextValidDueDate(task.dueDate, task.recurrence), task.recurrence);
     const assigneeIds = task.recurrence.rotate
       ? Array.from(new Set(getAssigneeIds(task).map((id) => getNextUserId(id))))
       : getAssigneeIds(task).slice();
@@ -4080,6 +4106,17 @@
         break;
       }
       next = getNextDueDate(next, recurrence.type);
+      guard += 1;
+    }
+    return next;
+  }
+
+  function getCaughtUpDueDate(dateIso, recurrence) {
+    const today = toISO(new Date());
+    let next = dateIso;
+    let guard = 0;
+    while (next < today && guard < 1000) {
+      next = getNextValidDueDate(next, recurrence);
       guard += 1;
     }
     return next;

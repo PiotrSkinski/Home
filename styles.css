@@ -1675,6 +1675,12 @@ button.metric {
   white-space: nowrap;
 }
 
+.leader-person .compact-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 720;
+}
+
 .progress {
   height: 9px;
   overflow: hidden;
