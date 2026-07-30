@@ -1,10 +1,10 @@
-const CACHE_NAME = "homejob-v41";
+const CACHE_NAME = "homejob-v42";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=41",
-  "./app.js?v=41",
-  "./manifest.webmanifest?v=41",
+  "./styles.css?v=42",
+  "./app.js?v=42",
+  "./manifest.webmanifest?v=42",
   "./icon.svg"
 ];
 
@@ -71,7 +71,10 @@ self.addEventListener("notificationclick", (event) => {
 async function showPushNotifications() {
   const messages = await getPendingPushMessages();
 
-  if (!messages.length) {
+  // null = the payload could not be fetched, so fall back to a generic nudge.
+  // An empty list means the server had nothing to show (e.g. the task was
+  // already completed or marked "nie ma potrzeby") — stay silent then.
+  if (messages === null) {
     await self.registration.showNotification("HomeJob", {
       body: "Masz zadania do sprawdzenia.",
       tag: "homejob-fallback",
@@ -101,7 +104,7 @@ async function getPendingPushMessages() {
   try {
     const subscription = await self.registration.pushManager.getSubscription();
     if (!subscription) {
-      return [];
+      return null;
     }
 
     const response = await fetch(new URL("./api/push-payload", self.registration.scope), {
@@ -114,12 +117,12 @@ async function getPendingPushMessages() {
     });
 
     if (!response.ok) {
-      return [];
+      return null;
     }
 
     const payload = await response.json();
-    return Array.isArray(payload.messages) ? payload.messages : [];
+    return Array.isArray(payload.messages) ? payload.messages : null;
   } catch (error) {
-    return [];
+    return null;
   }
 }

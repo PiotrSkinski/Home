@@ -36,6 +36,11 @@ export async function onRequestPost({ request, env }) {
   const messages = result.results || [];
   const deliveredAt = new Date().toISOString();
 
+  // A reminder can be queued before its task gets completed, skipped ("nie ma
+  // potrzeby") or deleted. Consume those rows without handing them to the
+  // device, so a closed task never produces a notification.
+  const staleIds = await findStaleMessageIds(db, messages);
+
   for (const message of messages) {
     await db
       .prepare("UPDATE push_messages SET delivered_at = ?1 WHERE id = ?2")
@@ -44,17 +49,53 @@ export async function onRequestPost({ request, env }) {
   }
 
   return json({
-    messages: messages.map((message) => ({
-      id: message.id,
-      title: message.title,
-      body: message.body,
-      url: message.url,
-      tag: message.tag,
-      taskId: message.task_id,
-      kind: message.kind,
-      createdAt: message.created_at
-    }))
+    messages: messages
+      .filter((message) => !staleIds.has(message.id))
+      .map((message) => ({
+        id: message.id,
+        title: message.title,
+        body: message.body,
+        url: message.url,
+        tag: message.tag,
+        taskId: message.task_id,
+        kind: message.kind,
+        createdAt: message.created_at
+      }))
   });
+}
+
+async function findStaleMessageIds(db, messages) {
+  const stale = new Set();
+  const taskMessages = messages.filter((message) => message.task_id);
+  if (!taskMessages.length) {
+    return stale;
+  }
+
+  const stateByHousehold = new Map();
+  for (const householdId of new Set(taskMessages.map((message) => message.household_id))) {
+    const row = await db.prepare("SELECT value FROM households WHERE id = ?1").bind(householdId).first();
+    if (!row) {
+      continue;
+    }
+    try {
+      stateByHousehold.set(householdId, JSON.parse(row.value));
+    } catch (error) {
+      // Unreadable state: leave the messages alone rather than dropping them.
+    }
+  }
+
+  for (const message of taskMessages) {
+    const state = stateByHousehold.get(message.household_id);
+    if (!state) {
+      continue;
+    }
+    const task = (state.tasks || []).find((item) => item.id === message.task_id);
+    if (!task || task.status !== "open") {
+      stale.add(message.id);
+    }
+  }
+
+  return stale;
 }
 
 export function onRequestOptions() {
