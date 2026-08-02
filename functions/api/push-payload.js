@@ -24,7 +24,7 @@ export async function onRequestPost({ request, env }) {
 
   const result = await db
     .prepare(
-      `SELECT id, title, body, url, tag, task_id, kind, created_at
+      `SELECT id, household_id, title, body, url, tag, task_id, kind, created_at
        FROM push_messages
        WHERE subscription_id = ?1 AND delivered_at IS NULL
        ORDER BY created_at ASC
@@ -38,8 +38,15 @@ export async function onRequestPost({ request, env }) {
 
   // A reminder can be queued before its task gets completed, skipped ("nie ma
   // potrzeby") or deleted. Consume those rows without handing them to the
-  // device, so a closed task never produces a notification.
-  const staleIds = await findStaleMessageIds(db, messages);
+  // device, so a closed task never produces a notification. If this check ever
+  // fails, deliver the messages as-is: a stale reminder beats replacing every
+  // notification with the service worker's contentless fallback.
+  let staleIds = new Set();
+  try {
+    staleIds = await findStaleMessageIds(db, messages);
+  } catch (error) {
+    staleIds = new Set();
+  }
 
   for (const message of messages) {
     await db
@@ -66,19 +73,18 @@ export async function onRequestPost({ request, env }) {
 
 async function findStaleMessageIds(db, messages) {
   const stale = new Set();
-  const taskMessages = messages.filter((message) => message.task_id);
+  const taskMessages = messages.filter((message) => message.task_id && message.household_id);
   if (!taskMessages.length) {
     return stale;
   }
 
   const stateByHousehold = new Map();
   for (const householdId of new Set(taskMessages.map((message) => message.household_id))) {
-    const row = await db.prepare("SELECT value FROM households WHERE id = ?1").bind(householdId).first();
-    if (!row) {
-      continue;
-    }
     try {
-      stateByHousehold.set(householdId, JSON.parse(row.value));
+      const row = await db.prepare("SELECT value FROM households WHERE id = ?1").bind(householdId).first();
+      if (row) {
+        stateByHousehold.set(householdId, JSON.parse(row.value));
+      }
     } catch (error) {
       // Unreadable state: leave the messages alone rather than dropping them.
     }

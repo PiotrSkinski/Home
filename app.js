@@ -568,6 +568,13 @@
       return;
     }
 
+    // Re-rendering rebuilds the whole screen, which would wipe whatever the
+    // user has typed into an open dialog. Skip this round; the next tick (or
+    // the next foreground) picks it up once the dialog is closed.
+    if (activeModal) {
+      return;
+    }
+
     if (JSON.stringify(getRemoteStatePayload()) !== lastRemotePayload) {
       queueRemoteSave(100);
       return;
@@ -3383,7 +3390,9 @@
 
     state.notifications = state.notifications.slice(0, 30);
     saveState();
-    render();
+    if (!activeModal) {
+      render();
+    }
   }
 
   function getDueReminderTasks() {
