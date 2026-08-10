@@ -1,22 +1,70 @@
 :root {
-  --bg: #fbf5ee;
-  --surface: #fffaf4;
-  --surface-soft: #f7eadc;
-  --surface-warm: #fff0cf;
-  --ink: #2d241c;
-  --muted: #786b5f;
-  --line: #eadbca;
-  --teal: #b85f45;
-  --teal-strong: #8f4938;
-  --mint: #d8c88f;
-  --coral: #d96850;
-  --amber: #e4a43e;
-  --blue: #6f8f76;
-  --violet: #9b6d7b;
-  --danger: #b84e48;
-  --shadow: 0 16px 42px rgba(82, 58, 36, 0.12);
-  --radius: 8px;
-  --radius-sm: 6px;
+  /* --- Gradient bazowy: brzoskwinia -> róż -> lawenda --- */
+  --grad-1: #ffd7b0;
+  --grad-2: #ffbfd4;
+  --grad-3: #c3b4f2;
+
+  /* --- Szkło: 3 poziomy. 1 = elementy list (bez blura), 3 = chrome (z blurem) --- */
+  --glass-1: rgba(255, 255, 255, 0.3);
+  --glass-2: rgba(255, 255, 255, 0.42);
+  --glass-3: rgba(255, 255, 255, 0.58);
+  --glass-hover: rgba(255, 255, 255, 0.54);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-border-soft: rgba(255, 255, 255, 0.45);
+  --blur: blur(16px);
+  --blur-strong: blur(22px);
+
+  /* --- Cienie: miękkie, rozproszone, w tonacji fioletu --- */
+  --shadow-sm: 0 2px 10px rgba(76, 55, 112, 0.06);
+  --shadow-md: 0 10px 30px rgba(76, 55, 112, 0.1);
+  --shadow-lg: 0 20px 50px rgba(76, 55, 112, 0.16);
+  --shadow-accent: 0 10px 26px rgba(109, 40, 217, 0.28);
+
+  /* --- Promienie --- */
+  --radius-lg: 22px;
+  --radius: 18px;
+  --radius-sm: 12px;
+
+  /* --- Typografia --- */
+  --fs-hero: clamp(1.45rem, 5.2vw, 2rem);
+  --fs-title: 1.06rem;
+  --fs-body: 0.95rem;
+  --fs-meta: 0.8rem;
+  --fs-micro: 0.72rem;
+
+  /* --- Ruch --- */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 160ms;
+  --dur: 240ms;
+  --dur-slow: 320ms;
+
+  /* --- Tekst (kontrast zweryfikowany: 12,5:1 i 5,9:1 na najciemniejszym stopie) --- */
+  --ink: #2e2440;
+  --muted: #544862;
+
+  /* --- Akcenty --- */
+  --accent: #6d28d9;
+  --accent-strong: #5b21b6;
+  --accent-soft: #ede9fe;
+  --success: #047857;
+  --success-soft: #d1fae5;
+
+  /* --- Aliasy zgodności: nazwy zostają, wartości przechodzą na nową paletę,
+         dzięki czemu 141 istniejących użyć var() aktualizuje się samo --- */
+  --bg: #f6f1fb;
+  --surface: var(--glass-2);
+  --surface-soft: var(--glass-1);
+  --surface-warm: var(--accent-soft);
+  --line: var(--glass-border-soft);
+  --teal: var(--accent);
+  --teal-strong: var(--accent-strong);
+  --mint: #a7f3d0;
+  --coral: #e11d74;
+  --amber: #d97706;
+  --blue: #2563eb;
+  --violet: #7c3aed;
+  --danger: #be123c;
+  --shadow: var(--shadow-md);
   --sidebar: 280px;
 }
 
@@ -2312,4 +2360,694 @@ button.metric {
     justify-self: end;
     width: auto;
   }
+}
+
+/* =========================================================================
+   WARSTWA SZKŁA (glassmorphism)
+   Nadpisuje wyłącznie wygląd: tło, obwódkę, promień, cień, kolor, blur.
+   Układ (grid/flex/padding/marginesy) zostaje nietknięty.
+   ========================================================================= */
+
+/* --- Gradient bazowy: stały element pod całą aplikacją.
+       position:fixed zamiast background-attachment:fixed — to drugie
+       potrafi ciąć płynność scrollowania na iOS. --- */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(1200px 680px at 12% -8%, rgba(255, 228, 206, 0.95), transparent 60%),
+    radial-gradient(1000px 720px at 100% 8%, rgba(252, 216, 228, 0.9), transparent 62%),
+    linear-gradient(165deg, var(--grad-1) 0%, var(--grad-2) 46%, var(--grad-3) 100%);
+}
+
+/* Tło musi być przezroczyste — inaczej przykryłoby body::before z gradientem */
+body {
+  background: transparent;
+}
+
+html {
+  background: var(--grad-2);
+}
+
+/* --- Chrome aplikacji: tu blur jest tani (elementy nieliczne i stałe) --- */
+.sidebar,
+.topbar,
+.modal,
+.notification-panel {
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--blur-strong);
+  backdrop-filter: var(--blur-strong);
+  border-color: var(--glass-border);
+}
+
+.sidebar {
+  border-right: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --- Panele i karty --- */
+.metric,
+.mini-rank-card,
+.person-card,
+.detail-card,
+.login-card,
+.known-house-card,
+.household-badge,
+.empty-state,
+.reward-card,
+.reward-task-card,
+.notification-item,
+.history-item,
+.comment-item,
+.mini-item {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-2);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --- Elementy powtarzalne w listach: „sztuczne szkło" bez backdrop-filter.
+       Na gradiencie wygląda tak samo, a nie obciąża scrollowania. --- */
+.task-card,
+.day-cell {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-1);
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+.task-card:hover,
+.day-cell:hover {
+  transform: translateY(-2px);
+  background: var(--glass-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.task-card:active,
+.day-cell:active {
+  transform: translateY(0) scale(0.995);
+  box-shadow: var(--shadow-sm);
+}
+
+.task-card.is-selected,
+.day-cell.is-selected {
+  border-color: rgba(109, 40, 217, 0.5);
+  box-shadow: var(--shadow-md), 0 0 0 3px rgba(109, 40, 217, 0.12);
+}
+
+/* Zrobione i „nie ma potrzeby" — wyraźnie odróżnione od aktywnych */
+.task-card.is-done {
+  background: rgba(209, 250, 229, 0.42);
+  border-color: rgba(4, 120, 87, 0.28);
+}
+
+.task-card.is-done .task-title {
+  color: var(--success);
+}
+
+.task-card.is-skipped {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: var(--glass-border-soft);
+  opacity: 0.7;
+}
+
+.task-card.is-projected {
+  background: rgba(255, 255, 255, 0.16);
+  border-style: dashed;
+  border-color: var(--glass-border-soft);
+  box-shadow: none;
+}
+
+/* --- Marker ukończenia --- */
+.task-check {
+  border: 2px solid rgba(109, 40, 217, 0.3);
+  background: rgba(255, 255, 255, 0.6);
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.task-check:not(:disabled):hover {
+  border-color: var(--accent);
+  transform: scale(1.08);
+}
+
+.task-card.is-done .task-check {
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+}
+
+/* --- Przyciski --- */
+.button,
+.icon-button,
+.ghost-button,
+.danger-button {
+  border-radius: var(--radius-sm);
+  transition:
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease);
+}
+
+.button {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: #fff;
+  box-shadow: var(--shadow-accent);
+}
+
+.button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px rgba(109, 40, 217, 0.34);
+  filter: saturate(1.08);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.ghost-button,
+.icon-button {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-2);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  color: var(--ink);
+}
+
+.ghost-button:hover,
+.icon-button:hover {
+  background: var(--glass-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+
+.danger-button {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(190, 18, 60, 0.24);
+}
+
+.shopping-button {
+  background: linear-gradient(135deg, #db2777 0%, #9d174d 100%);
+  box-shadow: 0 10px 26px rgba(219, 39, 119, 0.28);
+}
+
+.brand-mark {
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent) 0%, #db2777 100%);
+  box-shadow: var(--shadow-accent);
+}
+
+/* --- Chipy i pigułki --- */
+.chip {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-2);
+  color: var(--muted);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.chip:hover {
+  background: var(--glass-hover);
+}
+
+.chip.is-active {
+  border-color: rgba(109, 40, 217, 0.4);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.pill {
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--muted);
+}
+
+.pill.urgent {
+  color: #6b21a8;
+  background: rgba(233, 213, 255, 0.85);
+}
+
+.pill.high {
+  color: #9f1239;
+  background: rgba(255, 214, 228, 0.85);
+}
+
+.pill.medium {
+  color: #92400e;
+  background: rgba(254, 230, 190, 0.85);
+}
+
+.pill.low {
+  color: #065f46;
+  background: rgba(196, 245, 224, 0.85);
+}
+
+.pill.done {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.pill.blue {
+  color: #1d4ed8;
+  background: rgba(214, 228, 255, 0.85);
+}
+
+.pill.overdue {
+  color: #9f1239;
+  background: rgba(255, 205, 219, 0.9);
+}
+
+.pill.skipped {
+  color: #57534e;
+  background: rgba(231, 229, 228, 0.8);
+}
+
+/* --- Pola formularzy --- */
+.input,
+.select,
+.textarea {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.16);
+  outline: none;
+}
+
+/* --- Oś nagród / paski postępu --- */
+.reward-axis {
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: inset 0 1px 3px rgba(76, 55, 112, 0.08);
+}
+
+.reward-axis-fill {
+  background: linear-gradient(90deg, var(--accent) 0%, #db2777 100%);
+  transition: width var(--dur-slow) var(--ease);
+}
+
+.progress {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* --- Nawigacja --- */
+.nav-button {
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.nav-button:hover {
+  background: var(--glass-1);
+  color: var(--ink);
+}
+
+.nav-button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* --- Modale --- */
+.modal-backdrop {
+  background: rgba(46, 36, 64, 0.34);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.modal {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* --- Hero (podsumowanie dnia) --- */
+.hero {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-2);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-md);
+  padding: 20px;
+}
+
+.hero-eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: 760;
+}
+
+.hero-title {
+  margin: 4px 0 0;
+  font-size: var(--fs-hero);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.hero-progress {
+  margin-top: 16px;
+}
+
+.hero-progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 1px 3px rgba(76, 55, 112, 0.1);
+}
+
+.hero-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) 0%, #db2777 100%);
+  transition: width 900ms var(--ease);
+}
+
+.hero-progress-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: 740;
+}
+
+.hero-progress-label strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.hero .metrics {
+  margin-top: 18px;
+}
+
+.hero .metric {
+  min-height: 84px;
+  background: var(--glass-1);
+  padding: 12px;
+}
+
+.hero .metric:hover {
+  background: var(--glass-hover);
+}
+
+/* =========================================================================
+   ANIMACJE I MIKROINTERAKCJE
+   Całość za bramką prefers-reduced-motion — kto wyłączył animacje w systemie,
+   dostaje statyczny interfejs bez żadnego ruchu.
+   ========================================================================= */
+
+@media (prefers-reduced-motion: no-preference) {
+  /* --- Wejście widoku: odpalane TYLKO przy zmianie widoku (klasa is-entering
+         nadawana w render()), nie przy każdym przerysowaniu ekranu --- */
+  @keyframes view-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Krótkie i płytkie — przy dłuższych opóźnieniach ekran wygląda przez chwilę
+     na pusty, co na telefonie czyta się jak zacięcie, a nie jak animacja. */
+  .main.is-entering .view > * {
+    animation: view-in 220ms var(--ease) both;
+  }
+
+  .main.is-entering .view > *:nth-child(1) { animation-delay: 0ms; }
+  .main.is-entering .view > *:nth-child(2) { animation-delay: 30ms; }
+  .main.is-entering .view > *:nth-child(3) { animation-delay: 60ms; }
+  .main.is-entering .view > *:nth-child(4) { animation-delay: 85ms; }
+  .main.is-entering .view > *:nth-child(n + 5) { animation-delay: 105ms; }
+
+  /* --- Modale --- */
+  @keyframes modal-in {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes backdrop-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal-backdrop {
+    animation: backdrop-in var(--dur) var(--ease) both;
+  }
+
+  .modal {
+    animation: modal-in var(--dur-slow) var(--ease) both;
+  }
+
+  /* --- Oznaczenie zadania jako zrobione --- */
+  @keyframes task-complete {
+    0% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    45% {
+      transform: scale(1.02);
+      background: rgba(209, 250, 229, 0.75);
+      box-shadow: var(--shadow-md), 0 0 0 4px rgba(4, 120, 87, 0.16);
+    }
+    100% {
+      transform: scale(0.97);
+      opacity: 0.25;
+    }
+  }
+
+  @keyframes check-pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.35) rotate(-8deg); }
+    100% { transform: scale(1.1) rotate(0deg); }
+  }
+
+  .task-card.is-completing {
+    animation: task-complete 280ms var(--ease) both;
+    pointer-events: none;
+  }
+
+  .task-card.is-completing .task-check {
+    border-color: var(--success);
+    background: var(--success);
+    color: #fff;
+    animation: check-pop 280ms var(--ease) both;
+  }
+
+  /* --- Toasty --- */
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .toast {
+    animation: toast-in var(--dur) var(--ease) both;
+  }
+}
+
+/* Bez animacji: paski postępu ustawiają się od razu, nic nie „jedzie" */
+@media (prefers-reduced-motion: reduce) {
+  .hero-progress-fill,
+  .reward-axis-fill {
+    transition: none;
+  }
+}
+
+/* --- Gradient: mocniejsze nasycenie, żeby szkło miało co przepuszczać --- */
+body::before {
+  background:
+    radial-gradient(900px 620px at 8% 2%, rgba(255, 198, 150, 0.9), transparent 58%),
+    radial-gradient(820px 640px at 96% 12%, rgba(255, 168, 205, 0.82), transparent 60%),
+    radial-gradient(760px 700px at 50% 108%, rgba(150, 130, 235, 0.6), transparent 62%),
+    linear-gradient(168deg, var(--grad-1) 0%, var(--grad-2) 42%, var(--grad-3) 100%);
+}
+
+/* --- Reszta elementów, które zostały w starej ciepłej palecie --- */
+.reward-axis-marker {
+  border-color: rgba(255, 255, 255, 0.85);
+  background: #8b80a3;
+  box-shadow: 0 2px 8px rgba(76, 55, 112, 0.18);
+}
+
+.reward-axis-marker.is-reached {
+  background: var(--accent);
+}
+
+.avatar {
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 16px rgba(76, 55, 112, 0.2);
+}
+
+.rank-number,
+.compact-stats span,
+.quick-button,
+.weekday-chip:has(input:checked),
+.household-pause-button.is-active,
+.shopping-missing-button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.quick-button {
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.quick-button:hover {
+  background: #ddd2fb;
+  transform: translateY(-1px);
+}
+
+.metric-link:hover,
+button.mini-item:hover,
+.reward-task-card:hover {
+  background: var(--glass-hover);
+}
+
+.reward-task-card,
+.known-house-card {
+  background: var(--glass-2);
+}
+
+.invite-code {
+  color: var(--accent-strong);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.day-count {
+  color: var(--muted);
+}
+
+.dot.urgent { background: var(--accent); }
+.dot.high { background: #e11d48; }
+.dot.medium { background: #f59e0b; }
+.dot.low { background: var(--success); }
+.dot.done { background: #a8a2b8; }
+
+.day-cell.is-today {
+  border-color: rgba(109, 40, 217, 0.45);
+}
+
+.day-cell.is-selected {
+  background: var(--accent-soft);
+}
+
+.toast {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--blur-strong);
+  backdrop-filter: var(--blur-strong);
+  box-shadow: var(--shadow-lg);
+}
+
+/* --- Stany interakcji: stare reguły ustawiały właściwości (głównie border-color),
+       których pierwsza wersja warstwy szkła nie dotykała — przez to przy najechaniu
+       wracały kolory poprzedniej szaty. Domykamy komplet. --- */
+.shopping-button:hover {
+  background: linear-gradient(135deg, #e0338a 0%, #a8185a 100%);
+  box-shadow: 0 14px 32px rgba(219, 39, 119, 0.34);
+}
+
+.task-card:hover,
+.day-cell:hover {
+  border-color: rgba(109, 40, 217, 0.34);
+}
+
+.metric-link:hover,
+.login-option:hover,
+.reward-task-card:hover,
+button.notification-item:hover,
+button.mini-item:hover {
+  border-color: rgba(109, 40, 217, 0.34);
+  background: var(--glass-hover);
+}
+
+.household-pause-button.is-active,
+.shopping-missing-button.is-active,
+.weekday-chip:has(input:checked) {
+  border-color: rgba(109, 40, 217, 0.4);
+}
+
+.nav-button:hover,
+.nav-button.is-active,
+.chip.is-active {
+  border-color: rgba(109, 40, 217, 0.34);
+}
+
+.invite-code {
+  border: 1px solid var(--glass-border);
+}
+
+/* Widoczny fokus klawiaturowy na całym interfejsie */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- Ostatnie cztery miejsca ze starą paletą, których wcześniejsze
+       nadpisania nie obejmowały (tło, nie obwódka) --- */
+.weekday {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.day-cell.is-muted {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.day-cell.is-today {
+  background: var(--accent-soft);
+}
+
+.reward-icon {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }

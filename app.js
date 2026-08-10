@@ -20,7 +20,7 @@
   const WEEKDAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"];
   const SHOPPING_ITEM_POINTS = 0.5;
   const SHOPPING_DELIVERY_POINTS = 5;
-  const COLORS = ["#1d766f", "#ef6f5e", "#4777c6", "#7561b5", "#b5792b", "#4a8f57"];
+  const COLORS = ["#6d28d9", "#db2777", "#2563eb", "#0d9488", "#ea580c", "#7c3aed"];
   const REWARD_THRESHOLDS = [
     { points: 200, label: "Nagroda" },
     { points: 350, label: "Duża nagroda" },
@@ -67,6 +67,7 @@
   let editingTaskId = null;
   let taskModalKind = "standard";
   let notificationPanelOpen = false;
+  let lastRenderedViewKey = null;
   let moreMenuOpen = false;
   let serviceWorkerRegistration = null;
   let remoteHydrationFinished = false;
@@ -953,10 +954,17 @@
       return;
     }
 
+    // The whole screen is rebuilt on every state change, so entry animations
+    // must only run when the user actually switches view — otherwise ticking a
+    // checkbox (or the 30s reminder sweep) would re-animate everything.
+    const viewKey = `${activeView}:${activeModal || ""}`;
+    const isEntering = viewKey !== lastRenderedViewKey;
+    lastRenderedViewKey = viewKey;
+
     app.innerHTML = `
       <div class="app-shell">
         ${renderSidebar(currentUser)}
-        <main class="main">
+        <main class="main${isEntering ? " is-entering" : ""}">
           ${renderTopbar(currentUser)}
           ${renderActiveView()}
         </main>
@@ -966,6 +974,24 @@
       ${activeModal === "pause" ? renderPauseModal() : ""}
       ${notificationPanelOpen ? renderNotificationPanel() : ""}
     `;
+
+    growProgressBars();
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function growProgressBars() {
+    const bars = app.querySelectorAll("[data-grow]");
+    if (!bars.length) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      bars.forEach((bar) => {
+        bar.style.width = `${bar.dataset.grow}%`;
+      });
+    });
   }
 
   function renderSidebar(currentUser) {
@@ -1348,6 +1374,8 @@
 
     return `
       <section class="view">
+        ${renderDashboardHero(mineToday, mineOverdue, homeToday, weeklyPoints)}
+
         <section class="section-block">
           <div class="section-head">
             <h2>Mini ranking</h2>
@@ -1368,7 +1396,36 @@
             ${renderTaskList(sortTasks(homeToday), "Czysto na dziś", "Nie ma dziś zaplanowanych zadań.")}
           </section>
         </div>
+      </section>
+    `;
+  }
 
+  function renderDashboardHero(mineToday, mineOverdue, homeToday, weeklyPoints) {
+    const currentUser = getCurrentUser();
+    const hour = new Date().getHours();
+    const greeting = hour < 5 ? "Dobrej nocy" : hour < 12 ? "Dzień dobry" : hour < 18 ? "Miłego dnia" : "Dobry wieczór";
+    const doneToday = getUserTaskCounts(state.currentUserId).today;
+    const totalToday = doneToday + mineToday.length;
+    const percent = totalToday ? Math.round((doneToday / totalToday) * 100) : 100;
+    const headline = mineToday.length
+      ? `Masz dziś ${mineToday.length} ${mineToday.length === 1 ? "zadanie" : mineToday.length < 5 ? "zadania" : "zadań"}`
+      : doneToday
+        ? "Wszystko na dziś zrobione"
+        : "Dziś nic nie zaplanowano";
+
+    return `
+      <section class="hero">
+        <p class="hero-eyebrow">${greeting}, ${escapeHtml(currentUser.name)}</p>
+        <h2 class="hero-title">${headline}</h2>
+        <div class="hero-progress">
+          <div class="hero-progress-label">
+            <span><strong>${doneToday}</strong> z ${totalToday} na dziś</span>
+            <span>${percent}%</span>
+          </div>
+          <div class="hero-progress-track">
+            <span class="hero-progress-fill" data-grow="${percent}" style="width:0%"></span>
+          </div>
+        </div>
         <div class="metrics">
           ${metricLink(mineToday.length, "Moje dziś", "mine-today")}
           ${metricLink(mineOverdue.length, "Moje zaległe", "mine-overdue")}
@@ -2647,7 +2704,16 @@
     }
 
     if (action === "complete-task") {
-      completeTask(actionElement.dataset.taskId);
+      const taskId = actionElement.dataset.taskId;
+      const card = actionElement.closest(".task-card");
+      // completeTask() rebuilds the screen, destroying this card — so play the
+      // confirmation on the existing element first, then hand over to it.
+      if (card && !prefersReducedMotion()) {
+        card.classList.add("is-completing");
+        window.setTimeout(() => completeTask(taskId), 260);
+        return;
+      }
+      completeTask(taskId);
       return;
     }
 
