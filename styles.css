@@ -34,6 +34,7 @@
 
   /* --- Ruch --- */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-fast: 160ms;
   --dur: 240ms;
   --dur-slow: 320ms;
@@ -3050,4 +3051,187 @@ button.mini-item:hover {
 .reward-icon {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+/* =========================================================================
+   WARSTWA DOTYKOWA
+   Aplikacja żyje na iPhonie, gdzie :hover nie istnieje. Poniżej to, co
+   zastępuje go realnym feedbackiem pod palcem.
+   ========================================================================= */
+
+/* Bez tego iOS rysuje własny szary prostokąt na dotknięcie i gasi nasz efekt */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.task-card,
+.metric,
+.chip,
+.button,
+.ghost-button,
+.icon-button,
+.danger-button,
+.nav-button,
+.quick-button,
+.day-cell,
+.mini-item,
+.notification-item,
+.reward-task-card,
+.login-option,
+.weekday-chip {
+  touch-action: manipulation;
+}
+
+/* --- Nacisk pod palcem --- */
+@media (hover: none) {
+  .task-card:active,
+  .metric:active,
+  .mini-item:active,
+  .notification-item:active,
+  .reward-task-card:active,
+  .login-option:active,
+  .day-cell:active {
+    transform: scale(0.97);
+    background: var(--glass-hover);
+  }
+
+  .button:active,
+  .ghost-button:active,
+  .icon-button:active,
+  .danger-button:active,
+  .quick-button:active,
+  .chip:active,
+  .nav-button:active,
+  .weekday-chip:active {
+    transform: scale(0.94);
+  }
+
+  /* Hover nie ma sensu na dotyku — gasimy uniesienia, żeby stan nie „przyklejał się"
+     po puszczeniu palca */
+  .task-card:hover,
+  .day-cell:hover,
+  .button:hover,
+  .ghost-button:hover,
+  .icon-button:hover,
+  .metric-link:hover {
+    transform: none;
+  }
+}
+
+/* --- Przesuń w prawo, aby ukończyć --- */
+.task-row {
+  position: relative;
+}
+
+.task-row.is-swipeable {
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+
+.swipe-reveal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 22px;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, transparent 10%, var(--success-soft) 65%);
+  color: var(--success);
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.task-row.is-swipeable:has(.is-swiping) .swipe-reveal {
+  opacity: 1;
+}
+
+.task-card.is-swiping {
+  transition: none;
+  will-change: transform;
+}
+
+.task-card.is-swipe-ready {
+  border-color: rgba(4, 120, 87, 0.5);
+}
+
+.task-card.is-swipe-ready .task-check {
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+}
+
+/* --- Konfetti: nad wszystkim, nieklikalne --- */
+.confetti-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* --- Odbicie ikony w nawigacji --- */
+  .nav-button .nav-icon {
+    display: inline-block;
+    transition: transform var(--dur) var(--spring);
+  }
+
+  .nav-button.is-active .nav-icon {
+    transform: translateY(-2px) scale(1.16);
+  }
+
+  /* --- Oddech tła: powolny dryf, bez interakcji --- */
+  body::before {
+    animation: tlo-oddech 16s ease-in-out infinite alternate;
+  }
+
+  @keyframes tlo-oddech {
+    from { transform: scale(1) translate(0, 0); }
+    to   { transform: scale(1.07) translate(-1.6%, 1.2%); }
+  }
+}
+
+/* Gradient musi mieć zapas poza ekranem, inaczej przy skalowaniu odsłoniłby krawędź */
+body::before {
+  inset: -8%;
+}
+
+/* --- Karta z dołu zamiast wyśrodkowanego okna (tylko telefon) --- */
+@media (max-width: 720px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal {
+    width: 100%;
+    max-width: none;
+    max-height: 92vh;
+    border-radius: 24px 24px 0 0;
+    border-bottom: none;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .modal::before {
+    content: "";
+    display: block;
+    width: 38px;
+    height: 4px;
+    margin: 2px auto 14px;
+    border-radius: 999px;
+    background: rgba(84, 72, 98, 0.28);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes sheet-in {
+      from { transform: translateY(100%); }
+      to   { transform: translateY(0); }
+    }
+
+    .modal {
+      animation: sheet-in var(--dur-slow) var(--spring) both;
+    }
+  }
 }

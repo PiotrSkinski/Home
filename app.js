@@ -68,6 +68,8 @@
   let taskModalKind = "standard";
   let notificationPanelOpen = false;
   let lastRenderedViewKey = null;
+  let knownRewardClaimIds = null;
+  let countedValues = new Map();
   let moreMenuOpen = false;
   let serviceWorkerRegistration = null;
   let remoteHydrationFinished = false;
@@ -90,6 +92,13 @@
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("pagehide", flushPendingSync);
   setInterval(refreshFromRemote, REMOTE_REFRESH_MS);
+
+  // Zdarzenia dotyku są delegowane na document, bo render() podmienia całe #app
+  // i handlery przypięte do konkretnych kart znikałyby przy każdym przerysowaniu.
+  document.addEventListener("touchstart", handleSwipeStart, { passive: true });
+  document.addEventListener("touchmove", handleSwipeMove, { passive: true });
+  document.addEventListener("touchend", handleSwipeEnd);
+  document.addEventListener("touchcancel", handleSwipeEnd);
 
   function createSeedState() {
     return {
@@ -414,7 +423,27 @@
     const carryoverChanged = processMonthlyCarryover();
     const bonusChanged = refreshHomeBonus();
     const claimsChanged = syncRewardClaims();
+    detectFreshRewardClaim();
     return carryoverChanged || bonusChanged || claimsChanged;
+  }
+
+  // Świętujemy wyłącznie próg zdobyty na żywo w tej sesji. Przy pierwszym
+  // uruchomieniu tylko zapamiętujemy, co już jest, żeby otwarcie aplikacji nie
+  // odpalało konfetti za nagrody sprzed tygodnia.
+  function detectFreshRewardClaim() {
+    const claims = Array.isArray(state.rewardClaims) ? state.rewardClaims : [];
+
+    if (!knownRewardClaimIds) {
+      knownRewardClaimIds = new Set(claims.map((claim) => claim.id));
+      return;
+    }
+
+    const swiezy = claims.find((claim) => !knownRewardClaimIds.has(claim.id) && claim.userId === state.currentUserId);
+    claims.forEach((claim) => knownRewardClaimIds.add(claim.id));
+
+    if (swiezy) {
+      confettiCelebration();
+    }
   }
 
   function persistLocalState(nextState) {
@@ -976,10 +1005,237 @@
     `;
 
     growProgressBars();
+    animateCounters();
   }
 
   function prefersReducedMotion() {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  /* ===================== Konfetti =====================
+     Jeden współdzielony canvas poza #app — render() przebudowuje #app przy
+     każdej zmianie stanu, więc cząstki muszą żyć poza tym drzewem. */
+  let confettiCanvas = null;
+  let confettiCtx = null;
+  let confettiPieces = [];
+  let confettiRunning = false;
+
+  const CONFETTI_COLORS = ["#6d28d9", "#db2777", "#047857", "#f59e0b", "#2563eb", "#a855f7", "#ec4899"];
+
+  function ensureConfettiCanvas() {
+    if (confettiCanvas) {
+      return confettiCanvas;
+    }
+    confettiCanvas = document.createElement("canvas");
+    confettiCanvas.className = "confetti-canvas";
+    confettiCanvas.setAttribute("aria-hidden", "true");
+    document.body.appendChild(confettiCanvas);
+    confettiCtx = confettiCanvas.getContext("2d");
+    resizeConfettiCanvas();
+    window.addEventListener("resize", resizeConfettiCanvas);
+    return confettiCanvas;
+  }
+
+  function resizeConfettiCanvas() {
+    if (!confettiCanvas) {
+      return;
+    }
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    confettiCanvas.width = window.innerWidth * ratio;
+    confettiCanvas.height = window.innerHeight * ratio;
+    confettiCanvas.style.width = `${window.innerWidth}px`;
+    confettiCanvas.style.height = `${window.innerHeight}px`;
+    confettiCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+
+  function spawnConfetti(x, y, count, power) {
+    for (let i = 0; i < count; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = power * (0.45 + Math.random() * 0.75);
+      confettiPieces.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - power * 0.45,
+        size: 5 + Math.random() * 6,
+        color: CONFETTI_COLORS[(Math.random() * CONFETTI_COLORS.length) | 0],
+        rot: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.32,
+        life: 0,
+        maxLife: 70 + Math.random() * 60
+      });
+    }
+    startConfettiLoop();
+  }
+
+  function startConfettiLoop() {
+    if (confettiRunning) {
+      return;
+    }
+    confettiRunning = true;
+    const step = () => {
+      confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+      confettiPieces = confettiPieces.filter((p) => p.life < p.maxLife && p.y < window.innerHeight + 60);
+
+      confettiPieces.forEach((p) => {
+        p.life += 1;
+        p.vy += 0.34;
+        p.vx *= 0.985;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rot += p.vr;
+
+        confettiCtx.save();
+        confettiCtx.globalAlpha = Math.max(0, 1 - p.life / p.maxLife);
+        confettiCtx.translate(p.x, p.y);
+        confettiCtx.rotate(p.rot);
+        confettiCtx.fillStyle = p.color;
+        confettiCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        confettiCtx.restore();
+      });
+
+      if (confettiPieces.length) {
+        requestAnimationFrame(step);
+      } else {
+        confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+        confettiRunning = false;
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Mały wystrzał przy ukończonym zadaniu. Punkt wystrzału trzymamy w obrębie
+  // ekranu — cząstki spoza widoku odsiewa filtr w pętli, więc konfetti
+  // odpalone przy karcie poniżej zgięcia w ogóle by się nie pokazało.
+  function confettiBurst(x, y) {
+    if (prefersReducedMotion()) {
+      return;
+    }
+    ensureConfettiCanvas();
+    const bx = Math.min(Math.max(x, 30), window.innerWidth - 30);
+    const by = Math.min(Math.max(y, 80), window.innerHeight - 120);
+    spawnConfetti(bx, by, 34, 9);
+  }
+
+  /* ============ Przesuń w prawo, aby ukończyć ============ */
+  const SWIPE_THRESHOLD = 96;
+  let swipe = null;
+
+  function handleSwipeStart(event) {
+    if (event.touches.length !== 1 || prefersReducedMotion()) {
+      return;
+    }
+
+    const card = event.target.closest(".task-card");
+    // Gest ma sens tylko tam, gdzie przycisk ukończenia jest aktywny — inaczej
+    // karta jechałaby na zielono, a completeTask() i tak by ją odrzucił.
+    const check = card?.querySelector("[data-action='complete-task']:not([disabled])");
+    if (!card || !check) {
+      return;
+    }
+
+    swipe = {
+      card,
+      taskId: check.dataset.taskId,
+      startX: event.touches[0].clientX,
+      startY: event.touches[0].clientY,
+      dx: 0,
+      kierunek: null
+    };
+  }
+
+  function handleSwipeMove(event) {
+    if (!swipe || event.touches.length !== 1) {
+      return;
+    }
+
+    const dx = event.touches[0].clientX - swipe.startX;
+    const dy = event.touches[0].clientY - swipe.startY;
+
+    // Zanim cokolwiek ruszymy, rozstrzygamy czy to przewijanie czy gest w bok.
+    if (!swipe.kierunek) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        return;
+      }
+      swipe.kierunek = Math.abs(dx) > Math.abs(dy) ? "poziomo" : "pionowo";
+      if (swipe.kierunek === "poziomo") {
+        swipe.card.classList.add("is-swiping");
+      }
+    }
+
+    if (swipe.kierunek !== "poziomo") {
+      return;
+    }
+
+    swipe.dx = Math.max(0, dx);
+    swipe.card.style.transform = `translateX(${swipe.dx}px)`;
+    swipe.card.classList.toggle("is-swipe-ready", swipe.dx > SWIPE_THRESHOLD);
+  }
+
+  function handleSwipeEnd() {
+    if (!swipe) {
+      return;
+    }
+
+    const { card, taskId, dx, kierunek } = swipe;
+    swipe = null;
+
+    if (kierunek !== "poziomo") {
+      return;
+    }
+
+    card.classList.remove("is-swiping", "is-swipe-ready");
+    card.style.transform = "";
+
+    if (dx > SWIPE_THRESHOLD) {
+      completeTaskWithFlourish(taskId, card);
+    }
+  }
+
+  // completeTask() przebudowuje ekran i niszczy kartę, więc potwierdzenie musi
+  // zagrać na istniejącym elemencie, zanim oddamy sterowanie. Konfetti leci
+  // przy każdym ukończeniu — także z widoku szczegółów, gdzie karty nie ma.
+  function completeTaskWithFlourish(taskId, card, origin) {
+    if (prefersReducedMotion()) {
+      completeTask(taskId);
+      return;
+    }
+
+    const zrodlo = card || origin;
+    if (zrodlo) {
+      const rect = zrodlo.getBoundingClientRect();
+      confettiBurst(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
+
+    if (!card) {
+      completeTask(taskId);
+      return;
+    }
+
+    card.classList.add("is-completing");
+    window.setTimeout(() => completeTask(taskId), 260);
+  }
+
+  // Pełny ekran przy zdobyciu progu nagrody — kilka fal z różnych stron.
+  function confettiCelebration() {
+    if (prefersReducedMotion()) {
+      return;
+    }
+    ensureConfettiCanvas();
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    const fala = (delay, punkty) => {
+      window.setTimeout(() => {
+        punkty.forEach(([x, y, n, power]) => spawnConfetti(x, y, n, power));
+      }, delay);
+    };
+
+    fala(0, [[w * 0.5, h * 0.42, 90, 15]]);
+    fala(140, [[0, h * 0.72, 55, 17], [w, h * 0.72, 55, 17]]);
+    fala(320, [[w * 0.22, h * 0.3, 50, 13], [w * 0.78, h * 0.3, 50, 13]]);
+    fala(520, [[w * 0.5, h * 0.2, 70, 14]]);
+    fala(760, [[w * 0.35, h * 0.55, 45, 12], [w * 0.65, h * 0.55, 45, 12]]);
   }
 
   function growProgressBars() {
@@ -991,6 +1247,41 @@
       bars.forEach((bar) => {
         bar.style.width = `${bar.dataset.grow}%`;
       });
+    });
+  }
+
+  // Liczby doliczają się tylko wtedy, gdy naprawdę się zmieniły. Bez tego każde
+  // przerysowanie (a jest ich sporo, także z timerów) startowałoby licznik od nowa.
+  function animateCounters() {
+    const nodes = app.querySelectorAll("[data-count]");
+    nodes.forEach((node) => {
+      const key = node.dataset.count;
+      const target = Number(node.dataset.countTo);
+      if (!Number.isFinite(target)) {
+        return;
+      }
+
+      const previous = countedValues.get(key);
+      countedValues.set(key, target);
+
+      if (previous === undefined || previous === target || prefersReducedMotion()) {
+        node.textContent = formatPoints(target);
+        return;
+      }
+
+      const start = previous;
+      const startedAt = performance.now();
+      const duration = 620;
+
+      const tick = (now) => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        node.textContent = formatPoints(Math.round((start + (target - start) * eased) * 10) / 10);
+        if (progress < 1) {
+          requestAnimationFrame(tick);
+        }
+      };
+      requestAnimationFrame(tick);
     });
   }
 
@@ -1488,7 +1779,7 @@
   function metricLink(value, label, target) {
     return `
       <button class="metric metric-link" type="button" data-action="metric-link" data-target="${target}">
-        <span class="metric-value">${value}</span>
+        <span class="metric-value" data-count="metric-${target}" data-count-to="${value}">${value}</span>
         <span class="metric-label">${label}</span>
       </button>
     `;
@@ -1979,6 +2270,8 @@
       .join("");
 
     return `
+      <div class="task-row${completeDisabled ? "" : " is-swipeable"}">
+      ${completeDisabled ? "" : `<span class="swipe-reveal" aria-hidden="true">Ukończone ✓</span>`}
       <article class="task-card ${closed ? "is-done" : ""} ${isSkipped(task) ? "is-skipped" : ""} ${
       selectedTaskId === task.id ? "is-selected" : ""
     }">
@@ -2011,6 +2304,7 @@
           }</button>
         </div>
       </article>
+      </div>
     `;
   }
 
@@ -2704,16 +2998,11 @@
     }
 
     if (action === "complete-task") {
-      const taskId = actionElement.dataset.taskId;
-      const card = actionElement.closest(".task-card");
-      // completeTask() rebuilds the screen, destroying this card — so play the
-      // confirmation on the existing element first, then hand over to it.
-      if (card && !prefersReducedMotion()) {
-        card.classList.add("is-completing");
-        window.setTimeout(() => completeTask(taskId), 260);
-        return;
-      }
-      completeTask(taskId);
+      completeTaskWithFlourish(
+        actionElement.dataset.taskId,
+        actionElement.closest(".task-card"),
+        actionElement
+      );
       return;
     }
 
