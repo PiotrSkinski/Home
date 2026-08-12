@@ -3141,7 +3141,17 @@ button.mini-item:hover {
   font-size: var(--fs-meta);
   font-weight: 800;
   opacity: 0;
+  /* Bez tego przezroczyste tło przechwytuje dotyk i kliknięcia, blokując
+     checkbox, wejście w zadanie oraz sam gest przesunięcia. */
+  pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease);
+}
+
+/* Karta musi leżeć nad warstwą przesunięcia — bez pozycjonowania element
+   absolutny malowałby się na wierzchu. */
+.task-row .task-card {
+  position: relative;
+  z-index: 1;
 }
 
 .task-row.is-swipeable:has(.is-swiping) .swipe-reveal {
