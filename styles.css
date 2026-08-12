@@ -3245,3 +3245,116 @@ body::before {
     }
   }
 }
+
+/* =========================================================================
+   ŚWIECĄCY PASEK POSTĘPU DO NAGRÓD
+   Pasek pulsuje zawsze (motywacja do kolejnego progu), a siła poświaty
+   narasta z każdym zdobytym progiem. Na 500 pkt wchodzi tryb "laser".
+   ========================================================================= */
+
+.reward-axis {
+  overflow: visible;
+}
+
+/* UWAGA: pasek jest pozycjonowany absolutnie (inset: 0 auto 0 0) — nie wolno
+   nadpisywać mu position, bo traci wysokość i zakotwiczenie. */
+.reward-axis-fill {
+  overflow: hidden;
+}
+
+/* Przesuwający się połysk — wspólny dla wszystkich poziomów */
+.reward-axis-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.55) 48%,
+    rgba(255, 255, 255, 0.85) 52%,
+    transparent 80%
+  );
+  transform: translateX(-120%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Poziom 0 — jeszcze bez progu: delikatny oddech, żeby pasek nie był martwy */
+  .reward-axis-fill.glow-0 {
+    animation: puls-0 3.4s ease-in-out infinite;
+  }
+
+  .reward-axis-fill.glow-1 {
+    animation: puls-1 2.8s ease-in-out infinite;
+  }
+
+  .reward-axis-fill.glow-2 {
+    animation: puls-2 2.2s ease-in-out infinite;
+  }
+
+  .reward-axis-fill.glow-3,
+  .reward-axis-fill.is-max {
+    animation: puls-laser 1.5s ease-in-out infinite;
+  }
+
+  .reward-axis-fill::after {
+    animation: polysk 3.6s var(--ease) infinite;
+  }
+
+  .reward-axis-fill.glow-1::after { animation-duration: 3s; }
+  .reward-axis-fill.glow-2::after { animation-duration: 2.4s; }
+  .reward-axis-fill.glow-3::after,
+  .reward-axis-fill.is-max::after { animation-duration: 1.4s; }
+
+  @keyframes polysk {
+    0%        { transform: translateX(-120%); }
+    55%, 100% { transform: translateX(220%); }
+  }
+
+  @keyframes puls-0 {
+    0%, 100% { box-shadow: 0 0 5px rgba(109, 40, 217, 0.3); }
+    50%      { box-shadow: 0 0 11px rgba(109, 40, 217, 0.5); }
+  }
+
+  @keyframes puls-1 {
+    0%, 100% { box-shadow: 0 0 9px rgba(109, 40, 217, 0.5), 0 0 16px rgba(219, 39, 119, 0.28); }
+    50%      { box-shadow: 0 0 18px rgba(109, 40, 217, 0.72), 0 0 30px rgba(219, 39, 119, 0.45); }
+  }
+
+  @keyframes puls-2 {
+    0%, 100% { box-shadow: 0 0 14px rgba(109, 40, 217, 0.62), 0 0 26px rgba(219, 39, 119, 0.42); }
+    50%      { box-shadow: 0 0 26px rgba(109, 40, 217, 0.9), 0 0 46px rgba(219, 39, 119, 0.66); }
+  }
+
+  /* Maksymalny próg — „laser": mocna, szeroka poświata i biały rdzeń */
+  @keyframes puls-laser {
+    0%, 100% {
+      box-shadow:
+        0 0 18px rgba(109, 40, 217, 0.85),
+        0 0 34px rgba(219, 39, 119, 0.7),
+        0 0 60px rgba(168, 85, 247, 0.5),
+        inset 0 0 10px rgba(255, 255, 255, 0.6);
+    }
+    50% {
+      box-shadow:
+        0 0 32px rgba(109, 40, 217, 1),
+        0 0 62px rgba(219, 39, 119, 0.9),
+        0 0 100px rgba(168, 85, 247, 0.75),
+        inset 0 0 18px rgba(255, 255, 255, 0.95);
+    }
+  }
+}
+
+/* Bez animacji: sama poświata, statyczna, wciąż rosnąca z progami */
+@media (prefers-reduced-motion: reduce) {
+  .reward-axis-fill.glow-1 { box-shadow: 0 0 12px rgba(109, 40, 217, 0.55); }
+  .reward-axis-fill.glow-2 { box-shadow: 0 0 18px rgba(109, 40, 217, 0.7); }
+  .reward-axis-fill.glow-3,
+  .reward-axis-fill.is-max { box-shadow: 0 0 26px rgba(109, 40, 217, 0.9), 0 0 44px rgba(219, 39, 119, 0.7); }
+  .reward-axis-fill::after { display: none; }
+}
+
+/* Znaczniki progów: zdobyty próg też lekko świeci */
+.reward-axis-marker.is-reached {
+  box-shadow: 0 0 10px rgba(109, 40, 217, 0.6);
+}

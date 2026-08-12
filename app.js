@@ -2775,10 +2775,14 @@
   function renderRewardAxis(points, variant = "") {
     const axisMax = Math.max(REWARD_THRESHOLDS[REWARD_THRESHOLDS.length - 1].points, points, 1);
     const fillWidth = Math.min(100, Math.max(3, (points / axisMax) * 100));
+    // Im więcej zdobytych progów, tym mocniejsza poświata. Na maksymalnym progu
+    // pasek przechodzi w tryb "laser".
+    const osiagniete = REWARD_THRESHOLDS.filter((threshold) => points >= threshold.points).length;
+    const maks = points >= REWARD_THRESHOLDS[REWARD_THRESHOLDS.length - 1].points;
 
     return `
       <div class="reward-axis ${variant}" aria-label="Postęp do nagród">
-        <span class="reward-axis-fill" style="width:${fillWidth}%"></span>
+        <span class="reward-axis-fill glow-${osiagniete}${maks ? " is-max" : ""}" style="width:${fillWidth}%"></span>
         ${REWARD_THRESHOLDS.map((threshold) => {
           const left = Math.min(100, (threshold.points / axisMax) * 100);
           const reached = points >= threshold.points ? "is-reached" : "";
