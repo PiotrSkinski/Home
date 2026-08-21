@@ -2635,6 +2635,11 @@ html {
   background: rgba(231, 229, 228, 0.8);
 }
 
+.pill.amber {
+  color: #92400e;
+  background: rgba(253, 224, 171, 0.9);
+}
+
 /* --- Pola formularzy --- */
 .input,
 .select,
@@ -2839,20 +2844,20 @@ html {
     animation: modal-in var(--dur-slow) var(--ease) both;
   }
 
-  /* --- Oznaczenie zadania jako zrobione --- */
-  @keyframes task-complete {
+  /* --- Zadanie „wymiecione”: karta odjeżdża w prawo za miotłą --- */
+  @keyframes task-swept {
     0% {
-      transform: scale(1);
+      transform: translateX(0) rotate(0deg);
       opacity: 1;
     }
-    45% {
-      transform: scale(1.02);
-      background: rgba(209, 250, 229, 0.75);
+    22% {
+      transform: translateX(-14px) rotate(-1.4deg) scale(1.015);
+      background: rgba(209, 250, 229, 0.7);
       box-shadow: var(--shadow-md), 0 0 0 4px rgba(4, 120, 87, 0.16);
     }
     100% {
-      transform: scale(0.97);
-      opacity: 0.25;
+      transform: translateX(120%) rotate(5deg) scale(0.92);
+      opacity: 0;
     }
   }
 
@@ -2863,7 +2868,7 @@ html {
   }
 
   .task-card.is-completing {
-    animation: task-complete 280ms var(--ease) both;
+    animation: task-swept 320ms var(--ease) both;
     pointer-events: none;
   }
 
@@ -3173,8 +3178,8 @@ button.mini-item:hover {
   color: #fff;
 }
 
-/* --- Konfetti: nad wszystkim, nieklikalne --- */
-.confetti-canvas {
+/* --- Miotła i kurz: nad wszystkim, nieklikalne --- */
+.sweep-canvas {
   position: fixed;
   inset: 0;
   z-index: 90;
@@ -3357,4 +3362,161 @@ body::before {
 /* Znaczniki progów: zdobyty próg też lekko świeci */
 .reward-axis-marker.is-reached {
   box-shadow: 0 0 10px rgba(109, 40, 217, 0.6);
+}
+
+/* ===================== Wnioski i głosowanie ===================== */
+.request-card {
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  box-shadow: var(--shadow-md), 0 0 0 3px rgba(253, 224, 171, 0.35);
+}
+
+.request-lead {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 700;
+}
+
+.request-reason {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  font-style: italic;
+}
+
+.request-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.vote-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.vote-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vote-item .item-title {
+  font-size: var(--fs-meta);
+  font-weight: 800;
+}
+
+.vote-item .item-text {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+}
+
+/* Sekcja zaległych na pulpicie — wyraźniejsza od reszty kafli */
+.overdue-section .section-head h2 {
+  color: #9f1239;
+}
+
+/* ===================== Więcej ruchu ===================== */
+@media (prefers-reduced-motion: no-preference) {
+  /* Karty zadań wjeżdżają kaskadą przy zmianie widoku */
+  @keyframes karta-wjazd {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .main.is-entering .task-row,
+  .main.is-entering .reward-task-card,
+  .main.is-entering .mini-rank-card {
+    animation: karta-wjazd var(--dur) var(--ease) both;
+  }
+
+  .main.is-entering .task-row:nth-child(1) { animation-delay: 20ms; }
+  .main.is-entering .task-row:nth-child(2) { animation-delay: 55ms; }
+  .main.is-entering .task-row:nth-child(3) { animation-delay: 90ms; }
+  .main.is-entering .task-row:nth-child(4) { animation-delay: 125ms; }
+  .main.is-entering .task-row:nth-child(5) { animation-delay: 160ms; }
+  .main.is-entering .task-row:nth-child(n + 6) { animation-delay: 195ms; }
+
+  /* Wniosek czekający na głos delikatnie pulsuje */
+  @keyframes wniosek-puls {
+    0%, 100% { box-shadow: var(--shadow-md), 0 0 0 3px rgba(253, 224, 171, 0.35); }
+    50% { box-shadow: var(--shadow-md), 0 0 0 7px rgba(253, 224, 171, 0.5); }
+  }
+
+  .request-card {
+    animation: wniosek-puls 2.6s ease-in-out infinite;
+  }
+
+  /* Plakietka zaległości przyciąga wzrok */
+  @keyframes zaleglosc-puls {
+    0%, 100% { transform: none; }
+    50% { transform: scale(1.06); }
+  }
+
+  .pill.overdue {
+    animation: zaleglosc-puls 2.2s var(--ease) infinite;
+  }
+
+  /* Miotła w logo lekko się kołysze */
+  @keyframes miotla-kolysanie {
+    0%, 100% { transform: rotate(-7deg); }
+    50% { transform: rotate(9deg); }
+  }
+
+  .brand-mark {
+    animation: miotla-kolysanie 3.4s ease-in-out infinite;
+  }
+
+  /* Wciśnięcie: wszystko sprężynuje pod palcem */
+  .button,
+  .ghost-button,
+  .danger-button,
+  .chip,
+  .quick-button,
+  .metric-link,
+  .reward-task-card,
+  .task-check {
+    transition: transform var(--dur-fast) var(--spring), box-shadow var(--dur-fast) var(--ease);
+  }
+
+  .button:active,
+  .ghost-button:active,
+  .danger-button:active,
+  .chip:active,
+  .quick-button:active,
+  .metric-link:active,
+  .reward-task-card:active,
+  .task-check:active {
+    transform: scale(0.95);
+  }
+
+  /* Plakietki wskakują przy wejściu w widok */
+  @keyframes plakietka-wskok {
+    from {
+      opacity: 0;
+      transform: scale(0.82);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .main.is-entering .pill {
+    animation: plakietka-wskok var(--dur-fast) var(--spring) both;
+  }
+}
+
+/* Znak firmowy to teraz miotła — emoji potrzebuje własnego rozmiaru */
+.brand-mark {
+  font-size: 1.25rem;
+  line-height: 1;
 }

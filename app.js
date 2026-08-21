@@ -15,8 +15,15 @@
   const REMOTE_REFRESH_MS = 60000;
   const VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U";
   const SYNC_DEBOUNCE_MS = 700;
-  const REMINDER_REPEAT_MINUTES = 30;
   const RECURRING_PROJECTION_DAYS = 365;
+  // Limit przekładania: tyle zatwierdzonych przełożeń może mieć jeden domownik
+  // w miesiącu kalendarzowym. Zmiana terminu „w przód” idzie wyłącznie tą drogą.
+  const MONTHLY_POSTPONE_LIMIT = 3;
+  // Wniosek bez kompletu głosów nie może wisieć w nieskończoność — po tylu
+  // dniach wygasa, a zadanie wraca do normalnego rytmu przypomnień.
+  const REQUEST_EXPIRY_DAYS = 3;
+  const MIN_REASON_LENGTH = 5;
+  const NOTIFICATIONS_LIMIT = 60;
   const WEEKDAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"];
   const SHOPPING_ITEM_POINTS = 0.5;
   const SHOPPING_DELIVERY_POINTS = 5;
@@ -41,9 +48,15 @@
     daily: "Codziennie",
     weekly: "Co tydzień",
     biweekly: "Co 2 tygodnie",
+    triweekly: "Co 3 tygodnie",
     monthly: "Co miesiąc",
     quarterly: "Co 3 miesiące",
     yearly: "Co rok"
+  };
+
+  const REQUEST_LABELS = {
+    skip: "Nie ma potrzeby",
+    postpone: "Przełożenie terminu"
   };
 
   const app = document.querySelector("#app");
@@ -66,6 +79,9 @@
   let activeModal = null;
   let editingTaskId = null;
   let taskModalKind = "standard";
+  let requestTaskId = null;
+  let requestKind = "postpone";
+  let votingRequestId = null;
   let notificationPanelOpen = false;
   let lastRenderedViewKey = null;
   let knownRewardClaimIds = null;
@@ -117,6 +133,7 @@
       pointEvents: [],
       notifications: [],
       rewardClaims: [],
+      taskRequests: [],
       deletedTaskIds: [],
       createdAt: new Date().toISOString()
     };
@@ -238,8 +255,9 @@
       users: Array.isArray(data.users) ? data.users : fallbackState.users,
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
       pointEvents: Array.isArray(data.pointEvents) ? data.pointEvents : [],
-      notifications: Array.isArray(data.notifications) ? data.notifications : [],
+      notifications: Array.isArray(data.notifications) ? data.notifications.slice(0, NOTIFICATIONS_LIMIT) : [],
       rewardClaims: Array.isArray(data.rewardClaims) ? data.rewardClaims : [],
+      taskRequests: normalizeTaskRequests(data.taskRequests),
       deletedTaskIds: Array.isArray(data.deletedTaskIds)
         ? data.deletedTaskIds
             .map((item) => ({
@@ -330,6 +348,42 @@
     }));
 
     return nextState;
+  }
+
+  // Wnioski (przełożenie / „nie ma potrzeby”) trzymamy w jednej liście obok
+  // zadań — dzięki temu limit 3 przełożeń na miesiąc i historia głosowań
+  // przeżywają usunięcie samego zadania.
+  function normalizeTaskRequests(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item) => item && item.taskId && (item.type === "skip" || item.type === "postpone"))
+      .map((item) => ({
+        id: item.id || uid("request"),
+        taskId: String(item.taskId),
+        taskTitle: item.taskTitle || "Zadanie",
+        type: item.type,
+        requestedById: item.requestedById || null,
+        reason: String(item.reason || ""),
+        previousDueDate: item.previousDueDate || null,
+        proposedDueDate: item.proposedDueDate || null,
+        status: item.status === "approved" || item.status === "rejected" ? item.status : "pending",
+        votes: Array.isArray(item.votes)
+          ? item.votes
+              .filter((vote) => vote && vote.userId)
+              .map((vote) => ({
+                userId: vote.userId,
+                value: vote.value === "no" ? "no" : "yes",
+                reason: String(vote.reason || ""),
+                createdAt: vote.createdAt || new Date().toISOString()
+              }))
+          : [],
+        createdAt: item.createdAt || new Date().toISOString(),
+        resolvedAt: item.resolvedAt || null
+      }))
+      .slice(0, 200);
   }
 
   function normalizePin(pin) {
@@ -423,8 +477,40 @@
     const carryoverChanged = processMonthlyCarryover();
     const bonusChanged = refreshHomeBonus();
     const claimsChanged = syncRewardClaims();
+    const requestsChanged = expireStaleRequests();
     detectFreshRewardClaim();
-    return carryoverChanged || bonusChanged || claimsChanged;
+    return carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
+  }
+
+  function expireStaleRequests() {
+    const cutoff = Date.now() - REQUEST_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    let changed = false;
+
+    getPendingRequests().forEach((request) => {
+      const createdAt = Date.parse(request.createdAt || "");
+      if (Number.isFinite(createdAt) && createdAt > cutoff) {
+        return;
+      }
+
+      request.status = "rejected";
+      request.resolvedAt = new Date().toISOString();
+      changed = true;
+
+      const task = getTask(request.taskId);
+      if (task) {
+        task.history.push(historyEntry(`Wniosek wygasł bez kompletu głosów (${REQUEST_LABELS[request.type]})`, request.requestedById));
+        task.lastNotifiedAt = null;
+      }
+
+      notifyUsers([request.requestedById], {
+        title: "Wniosek wygasł",
+        body: `Dom nie dogłosował w ciągu ${REQUEST_EXPIRY_DAYS} dni. „${request.taskTitle}” zostaje bez zmian.`,
+        taskId: request.taskId,
+        push: true
+      });
+    });
+
+    return changed;
   }
 
   // Świętujemy wyłącznie próg zdobyty na żywo w tej sesji. Przy pierwszym
@@ -442,7 +528,7 @@
     claims.forEach((claim) => knownRewardClaimIds.add(claim.id));
 
     if (swiezy) {
-      confettiCelebration();
+      sweepCelebration();
     }
   }
 
@@ -501,6 +587,7 @@
       pointEvents: state.pointEvents,
       notifications: state.notifications,
       rewardClaims: state.rewardClaims,
+      taskRequests: state.taskRequests,
       deletedTaskIds: state.deletedTaskIds,
       createdAt: state.createdAt
     };
@@ -754,10 +841,23 @@
         read: Boolean(serverItem.read || localItem.read)
       }))
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .slice(0, 30),
+        .slice(0, NOTIFICATIONS_LIMIT),
       rewardClaims: mergeById(serverState.rewardClaims, localState.rewardClaims, (serverClaim, localClaim) =>
         serverClaim.status === "done" && localClaim.status !== "done" ? serverClaim : localClaim
       ),
+      // Dwa telefony mogą głosować równocześnie, więc przy konflikcie sklejamy
+      // głosy z obu stron; rozstrzygnięty wniosek zawsze wygrywa z oczekującym.
+      taskRequests: mergeById(serverState.taskRequests, localState.taskRequests, (serverRequest, localRequest) => {
+        const votes = [...(serverRequest.votes || [])];
+        (localRequest.votes || []).forEach((vote) => {
+          if (!votes.some((item) => item.userId === vote.userId)) {
+            votes.push(vote);
+          }
+        });
+        const resolved =
+          serverRequest.status !== "pending" ? serverRequest : localRequest.status !== "pending" ? localRequest : localRequest;
+        return { ...resolved, votes };
+      }),
       deletedTaskIds: Array.from(deletedById.values()).slice(0, DELETED_TASKS_LIMIT),
       createdAt: serverState.createdAt || localState.createdAt
     };
@@ -999,6 +1099,8 @@
         </main>
       </div>
       ${activeModal === "task" ? renderTaskModal() : ""}
+      ${activeModal === "request" ? renderRequestModal() : ""}
+      ${activeModal === "vote" ? renderVoteModal() : ""}
       ${activeModal === "login" ? renderLoginModal() : ""}
       ${activeModal === "pause" ? renderPauseModal() : ""}
       ${notificationPanelOpen ? renderNotificationPanel() : ""}
@@ -1012,109 +1114,212 @@
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
-  /* ===================== Konfetti =====================
+  /* ===================== Miotła =====================
      Jeden współdzielony canvas poza #app — render() przebudowuje #app przy
-     każdej zmianie stanu, więc cząstki muszą żyć poza tym drzewem. */
-  let confettiCanvas = null;
-  let confettiCtx = null;
-  let confettiPieces = [];
-  let confettiRunning = false;
+     każdej zmianie stanu, więc animacja musi żyć poza tym drzewem.
+     Zamiast konfetti zadanie „wymiata” miotła: przejeżdża przez kartę i
+     zostawia za sobą chmurę kurzu. */
+  let sweepCanvas = null;
+  let sweepCtx = null;
+  let sweepMotes = [];
+  let sweepBrooms = [];
+  let sweepRunning = false;
 
-  const CONFETTI_COLORS = ["#6d28d9", "#db2777", "#047857", "#f59e0b", "#2563eb", "#a855f7", "#ec4899"];
+  const DUST_COLORS = ["#c3b4f2", "#ffd7b0", "#ffbfd4", "#a855f7", "#f6d5a8", "#ffffff"];
 
-  function ensureConfettiCanvas() {
-    if (confettiCanvas) {
-      return confettiCanvas;
+  function ensureSweepCanvas() {
+    if (sweepCanvas) {
+      return sweepCanvas;
     }
-    confettiCanvas = document.createElement("canvas");
-    confettiCanvas.className = "confetti-canvas";
-    confettiCanvas.setAttribute("aria-hidden", "true");
-    document.body.appendChild(confettiCanvas);
-    confettiCtx = confettiCanvas.getContext("2d");
-    resizeConfettiCanvas();
-    window.addEventListener("resize", resizeConfettiCanvas);
-    return confettiCanvas;
+    sweepCanvas = document.createElement("canvas");
+    sweepCanvas.className = "sweep-canvas";
+    sweepCanvas.setAttribute("aria-hidden", "true");
+    document.body.appendChild(sweepCanvas);
+    sweepCtx = sweepCanvas.getContext("2d");
+    resizeSweepCanvas();
+    window.addEventListener("resize", resizeSweepCanvas);
+    return sweepCanvas;
   }
 
-  function resizeConfettiCanvas() {
-    if (!confettiCanvas) {
+  function resizeSweepCanvas() {
+    if (!sweepCanvas) {
       return;
     }
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    confettiCanvas.width = window.innerWidth * ratio;
-    confettiCanvas.height = window.innerHeight * ratio;
-    confettiCanvas.style.width = `${window.innerWidth}px`;
-    confettiCanvas.style.height = `${window.innerHeight}px`;
-    confettiCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    sweepCanvas.width = window.innerWidth * ratio;
+    sweepCanvas.height = window.innerHeight * ratio;
+    sweepCanvas.style.width = `${window.innerWidth}px`;
+    sweepCanvas.style.height = `${window.innerHeight}px`;
+    sweepCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   }
 
-  function spawnConfetti(x, y, count, power) {
+  // Kurz leci głównie w prawo i do góry — tak, jakby zmiótł go ruch miotły.
+  function spawnDust(x, y, count, power) {
     for (let i = 0; i < count; i += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = power * (0.45 + Math.random() * 0.75);
-      confettiPieces.push({
+      const angle = -Math.PI * (0.04 + Math.random() * 0.46);
+      const speed = power * (0.35 + Math.random() * 0.85);
+      sweepMotes.push({
         x,
         y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - power * 0.45,
-        size: 5 + Math.random() * 6,
-        color: CONFETTI_COLORS[(Math.random() * CONFETTI_COLORS.length) | 0],
+        vx: Math.cos(angle) * speed + power * 0.42,
+        vy: Math.sin(angle) * speed,
+        size: 2 + Math.random() * 5,
+        color: DUST_COLORS[(Math.random() * DUST_COLORS.length) | 0],
         rot: Math.random() * Math.PI,
-        vr: (Math.random() - 0.5) * 0.32,
+        vr: (Math.random() - 0.5) * 0.3,
+        iskra: Math.random() < 0.3,
         life: 0,
-        maxLife: 70 + Math.random() * 60
+        maxLife: 38 + Math.random() * 46
       });
     }
-    startConfettiLoop();
+    startSweepLoop();
   }
 
-  function startConfettiLoop() {
-    if (confettiRunning) {
+  function spawnBroom(x, y, width, options = {}) {
+    sweepBrooms.push({
+      x0: x - width / 2,
+      x1: x + width / 2,
+      y,
+      life: 0,
+      maxLife: options.maxLife || 32,
+      scale: options.scale || 1,
+      power: options.power || 6,
+      kurz: options.kurz !== false
+    });
+    startSweepLoop();
+  }
+
+  function drawBroom(x, y, angle, scale, alpha) {
+    const ctx = sweepCtx;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.scale(scale, scale);
+    ctx.lineCap = "round";
+
+    ctx.strokeStyle = "#8b5a2b";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(0, -48);
+    ctx.lineTo(0, 5);
+    ctx.stroke();
+
+    ctx.fillStyle = "#6d28d9";
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(-7, 1, 14, 9, 3) : ctx.rect(-7, 1, 14, 9);
+    ctx.fill();
+
+    ctx.strokeStyle = "#e0a458";
+    ctx.lineWidth = 3;
+    for (let i = -6; i <= 6; i += 1) {
+      ctx.beginPath();
+      ctx.moveTo(i * 1.1, 9);
+      ctx.lineTo(i * 2.7, 30 + Math.abs(i) * 0.6);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  function startSweepLoop() {
+    if (sweepRunning) {
       return;
     }
-    confettiRunning = true;
+    sweepRunning = true;
     const step = () => {
-      confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
-      confettiPieces = confettiPieces.filter((p) => p.life < p.maxLife && p.y < window.innerHeight + 60);
+      sweepCtx.clearRect(0, 0, sweepCanvas.width, sweepCanvas.height);
 
-      confettiPieces.forEach((p) => {
+      sweepBrooms = sweepBrooms.filter((broom) => broom.life < broom.maxLife);
+      sweepBrooms.forEach((broom) => {
+        broom.life += 1;
+        const t = broom.life / broom.maxLife;
+        const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const x = broom.x0 + (broom.x1 - broom.x0) * eased;
+        const y = broom.y - Math.sin(t * Math.PI) * 8 * broom.scale;
+        drawBroom(x, y, -0.5 + t * 1.05, broom.scale, Math.min(1, Math.sin(t * Math.PI) * 2.4));
+
+        if (broom.kurz && broom.life % 2 === 0) {
+          spawnDust(x - 12 * broom.scale, y + 26 * broom.scale, 3, broom.power);
+        }
+      });
+
+      sweepMotes = sweepMotes.filter((p) => p.life < p.maxLife && p.y < window.innerHeight + 60);
+      sweepMotes.forEach((p) => {
         p.life += 1;
-        p.vy += 0.34;
-        p.vx *= 0.985;
+        p.vy += 0.16;
+        p.vx *= 0.975;
         p.x += p.vx;
         p.y += p.vy;
         p.rot += p.vr;
 
-        confettiCtx.save();
-        confettiCtx.globalAlpha = Math.max(0, 1 - p.life / p.maxLife);
-        confettiCtx.translate(p.x, p.y);
-        confettiCtx.rotate(p.rot);
-        confettiCtx.fillStyle = p.color;
-        confettiCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
-        confettiCtx.restore();
+        sweepCtx.save();
+        sweepCtx.globalAlpha = Math.max(0, 1 - p.life / p.maxLife) * 0.9;
+        sweepCtx.translate(p.x, p.y);
+        sweepCtx.rotate(p.rot);
+        sweepCtx.fillStyle = p.color;
+
+        if (p.iskra) {
+          // Iskierka: krótki krzyżyk, żeby chmura kurzu nie była jednolita.
+          sweepCtx.fillRect(-p.size, -p.size * 0.22, p.size * 2, p.size * 0.44);
+          sweepCtx.fillRect(-p.size * 0.22, -p.size, p.size * 0.44, p.size * 2);
+        } else {
+          sweepCtx.beginPath();
+          sweepCtx.arc(0, 0, p.size * 0.55, 0, Math.PI * 2);
+          sweepCtx.fill();
+        }
+
+        sweepCtx.restore();
       });
 
-      if (confettiPieces.length) {
+      if (sweepMotes.length || sweepBrooms.length) {
         requestAnimationFrame(step);
       } else {
-        confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
-        confettiRunning = false;
+        sweepCtx.clearRect(0, 0, sweepCanvas.width, sweepCanvas.height);
+        sweepRunning = false;
       }
     };
     requestAnimationFrame(step);
   }
 
-  // Mały wystrzał przy ukończonym zadaniu. Punkt wystrzału trzymamy w obrębie
-  // ekranu — cząstki spoza widoku odsiewa filtr w pętli, więc konfetti
-  // odpalone przy karcie poniżej zgięcia w ogóle by się nie pokazało.
-  function confettiBurst(x, y) {
+  // Zamiecenie pojedynczego zadania. Punkt startu trzymamy w obrębie ekranu —
+  // cząstki spoza widoku odsiewa filtr w pętli, więc animacja odpalona przy
+  // karcie poniżej zgięcia w ogóle by się nie pokazała.
+  function sweepBurst(x, y) {
     if (prefersReducedMotion()) {
       return;
     }
-    ensureConfettiCanvas();
-    const bx = Math.min(Math.max(x, 30), window.innerWidth - 30);
-    const by = Math.min(Math.max(y, 80), window.innerHeight - 120);
-    spawnConfetti(bx, by, 34, 9);
+    ensureSweepCanvas();
+    const bx = Math.min(Math.max(x, 70), window.innerWidth - 70);
+    const by = Math.min(Math.max(y, 100), window.innerHeight - 130);
+    spawnBroom(bx, by - 6, 210, { maxLife: 30, scale: 1, power: 6 });
+    spawnDust(bx - 60, by + 16, 14, 6);
+  }
+
+  // Pełny ekran przy zdobyciu progu nagrody — kilka miotieł przez cały ekran.
+  function sweepCelebration() {
+    if (prefersReducedMotion()) {
+      return;
+    }
+    ensureSweepCanvas();
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    const fala = (delay, akcja) => window.setTimeout(akcja, delay);
+
+    fala(0, () => {
+      spawnBroom(w * 0.5, h * 0.42, w + 160, { maxLife: 44, scale: 1.5, power: 9 });
+      spawnDust(w * 0.1, h * 0.5, 26, 9);
+    });
+    fala(220, () => spawnBroom(w * 0.5, h * 0.62, w + 160, { maxLife: 40, scale: 1.1, power: 7 }));
+    fala(420, () => {
+      spawnBroom(w * 0.5, h * 0.28, w + 160, { maxLife: 38, scale: 1.25, power: 8 });
+      spawnDust(w * 0.2, h * 0.34, 22, 8);
+    });
+    fala(680, () => {
+      spawnDust(w * 0.35, h * 0.55, 24, 7);
+      spawnDust(w * 0.65, h * 0.48, 24, 7);
+    });
   }
 
   /* ============ Przesuń w prawo, aby ukończyć ============ */
@@ -1193,7 +1398,7 @@
   }
 
   // completeTask() przebudowuje ekran i niszczy kartę, więc potwierdzenie musi
-  // zagrać na istniejącym elemencie, zanim oddamy sterowanie. Konfetti leci
+  // zagrać na istniejącym elemencie, zanim oddamy sterowanie. Miotła przejeżdża
   // przy każdym ukończeniu — także z widoku szczegółów, gdzie karty nie ma.
   function completeTaskWithFlourish(taskId, card, origin) {
     if (prefersReducedMotion()) {
@@ -1204,7 +1409,7 @@
     const zrodlo = card || origin;
     if (zrodlo) {
       const rect = zrodlo.getBoundingClientRect();
-      confettiBurst(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      sweepBurst(rect.left + rect.width / 2, rect.top + rect.height / 2);
     }
 
     if (!card) {
@@ -1213,29 +1418,7 @@
     }
 
     card.classList.add("is-completing");
-    window.setTimeout(() => completeTask(taskId), 260);
-  }
-
-  // Pełny ekran przy zdobyciu progu nagrody — kilka fal z różnych stron.
-  function confettiCelebration() {
-    if (prefersReducedMotion()) {
-      return;
-    }
-    ensureConfettiCanvas();
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-
-    const fala = (delay, punkty) => {
-      window.setTimeout(() => {
-        punkty.forEach(([x, y, n, power]) => spawnConfetti(x, y, n, power));
-      }, delay);
-    };
-
-    fala(0, [[w * 0.5, h * 0.42, 90, 15]]);
-    fala(140, [[0, h * 0.72, 55, 17], [w, h * 0.72, 55, 17]]);
-    fala(320, [[w * 0.22, h * 0.3, 50, 13], [w * 0.78, h * 0.3, 50, 13]]);
-    fala(520, [[w * 0.5, h * 0.2, 70, 14]]);
-    fala(760, [[w * 0.35, h * 0.55, 45, 12], [w * 0.65, h * 0.55, 45, 12]]);
+    window.setTimeout(() => completeTask(taskId), 320);
   }
 
   function growProgressBars() {
@@ -1356,7 +1539,7 @@
     return `
       <header class="topbar">
         <div class="topbar-brand">
-          <div class="brand-mark" aria-hidden="true">✓</div>
+          <div class="brand-mark" aria-hidden="true">🧹</div>
           <div>
             <h1 class="brand-title">HomeJob</h1>
             <p class="brand-subtitle">Wspólny rytm domu</p>
@@ -1419,7 +1602,7 @@
       <main class="login-page">
         <section class="login-card onboarding-card">
           <div class="topbar-brand">
-            <div class="brand-mark" aria-hidden="true">✓</div>
+            <div class="brand-mark" aria-hidden="true">🧹</div>
             <div>
               <h1 class="brand-title">HomeJob</h1>
               <p class="brand-subtitle">Wybierz dom albo utwórz nowe gospodarstwo</p>
@@ -1660,12 +1843,17 @@
   function renderDashboardView() {
     const mineToday = state.tasks.filter((task) => isAssignee(task, state.currentUserId) && isToday(task) && isOpen(task));
     const mineOverdue = state.tasks.filter((task) => isAssignee(task, state.currentUserId) && isOverdue(task));
+    const homeOverdue = state.tasks.filter((task) => isOverdue(task));
     const homeToday = state.tasks.filter((task) => isToday(task) && isOpen(task));
     const weeklyPoints = getUserPoints(state.currentUserId, 7);
 
     return `
       <section class="view">
         ${renderDashboardHero(mineToday, mineOverdue, homeToday, weeklyPoints)}
+
+        ${renderDashboardVotes()}
+
+        ${renderDashboardOverdue(mineOverdue, homeOverdue)}
 
         <section class="section-block">
           <div class="section-head">
@@ -1722,6 +1910,66 @@
           ${metricLink(mineOverdue.length, "Moje zaległe", "mine-overdue")}
           ${metricLink(homeToday.length, "Dom dziś", "today")}
           ${metricLink(weeklyPoints, "Punkty w 7 dni", "rewards")}
+        </div>
+      </section>
+    `;
+  }
+
+  // Zaległości muszą być widoczne od razu po wejściu — sam licznik w kaflu
+  // nie wystarczał, bo lista zaległych żyła wyłącznie w filtrze na innym ekranie.
+  function renderDashboardOverdue(mineOverdue, homeOverdue) {
+    if (!homeOverdue.length) {
+      return "";
+    }
+
+    const mineIds = new Set(mineOverdue.map((task) => task.id));
+    const pozostale = homeOverdue.filter((task) => !mineIds.has(task.id));
+    const uporzadkowane = [...sortTasks(mineOverdue), ...sortTasks(pozostale)];
+
+    return `
+      <section class="section-block overdue-section">
+        <div class="section-head">
+          <h2>Zaległe${mineOverdue.length ? ` · Twoje: ${mineOverdue.length}` : ""}</h2>
+          <button class="chip" type="button" data-action="quick-filter" data-filter="overdue">Pełna lista</button>
+        </div>
+        ${renderTaskList(uporzadkowane.slice(0, 6), "Bez zaległości", "Nic nie zostało z poprzednich dni.")}
+      </section>
+    `;
+  }
+
+  function renderDashboardVotes() {
+    const pending = getPendingRequests();
+    if (!pending.length) {
+      return "";
+    }
+
+    const doGlosowania = pending.filter((request) => !hasVoted(request, state.currentUserId));
+    const lista = doGlosowania.length ? doGlosowania : pending;
+
+    return `
+      <section class="section-block votes-section">
+        <div class="section-head">
+          <h2>${doGlosowania.length ? "Czekają na Twój głos" : "Wnioski w głosowaniu"}</h2>
+        </div>
+        <div class="reward-task-list">
+          ${lista
+            .map((request) => {
+              const author = getUser(request.requestedById);
+              const opis =
+                request.type === "skip"
+                  ? "nie ma potrzeby"
+                  : `przełożenie na ${formatHumanDate(request.proposedDueDate)}`;
+              return `
+                <button class="reward-task-card" type="button" data-action="select-task" data-task-id="${request.taskId}">
+                  ${avatar(author, "small")}
+                  <span>
+                    <strong>${escapeHtml(request.taskTitle)} · ${opis}</strong>
+                    <small>${escapeHtml(author.name)}: ${escapeHtml(request.reason)}</small>
+                  </span>
+                </button>
+              `;
+            })
+            .join("")}
         </div>
       </section>
     `;
@@ -2263,6 +2511,7 @@
       isOverdue(task) ? `<span class="pill overdue">Zaległe</span>` : "",
       task.status === "done" ? `<span class="pill done">Ukończone</span>` : "",
       isSkipped(task) ? `<span class="pill skipped">Nie było potrzeby</span>` : "",
+      getPendingRequestForTask(task.id) ? `<span class="pill amber">Głosowanie</span>` : "",
       assignees.length > 1 ? `<span class="pill blue">${assignees.length} osoby</span>` : "",
       task.recurrence.type !== "none" ? `<span class="pill blue">${RECURRENCE[task.recurrence.type]}</span>` : ""
     ]
@@ -2321,9 +2570,11 @@
     const shopping = isShoppingTask(task);
     const statusPill = task.status === "done" ? "done" : isSkipped(task) ? "skipped" : shopping ? "blue" : PRIORITY[task.priority].className;
     const statusLabel = task.status === "done" ? "Ukończone" : isSkipped(task) ? "Nie było potrzeby" : shopping ? "Zakupy" : PRIORITY[task.priority].label;
+    const pendingRequest = getPendingRequestForTask(task.id);
 
     return `
       <div class="inspector-stack">
+        ${renderRequestPanel(task)}
         <section class="detail-card">
           <div class="section-head">
             <h2>Szczegóły</h2>
@@ -2360,8 +2611,13 @@
                   : `<button class="ghost-button" type="button" data-action="assign-me" data-task-id="${task.id}">Przepisz na mnie</button>`
             }
             ${
-              !closed && canComplete && !shopping
+              !closed && canComplete && !shopping && !pendingRequest
                 ? `<button class="ghost-button" type="button" data-action="skip-task" data-task-id="${task.id}">Nie ma potrzeby</button>`
+                : ""
+            }
+            ${
+              !closed && canComplete && !task.isRewardTask && !pendingRequest
+                ? `<button class="ghost-button" type="button" data-action="postpone-task" data-task-id="${task.id}">Przełóż</button>`
                 : ""
             }
             <button class="ghost-button" type="button" data-action="edit-task" data-task-id="${task.id}">Edytuj</button>
@@ -2485,6 +2741,79 @@
     `;
   }
 
+  function renderRequestPanel(task) {
+    const request = getPendingRequestForTask(task.id);
+    if (!request) {
+      return "";
+    }
+
+    const author = getUser(request.requestedById);
+    const yes = countVotes(request, "yes");
+    const no = countVotes(request, "no");
+    const required = getRequiredVotes();
+    const mine = hasVoted(request, state.currentUserId);
+    const isAuthor = request.requestedById === state.currentUserId;
+
+    return `
+      <section class="detail-card request-card">
+        <div class="section-head">
+          <h2>${REQUEST_LABELS[request.type]}</h2>
+          <span class="pill amber">Głosowanie</span>
+        </div>
+        <p class="request-lead">${escapeHtml(author.name)} prosi o ${
+          request.type === "skip"
+            ? "zamknięcie zadania bez wykonania"
+            : `przesunięcie terminu na ${formatHumanDate(request.proposedDueDate)}`
+        }.</p>
+        <p class="request-reason">„${escapeHtml(request.reason)}”</p>
+        <div class="request-tally">
+          <span class="pill done">Za: ${yes}</span>
+          <span class="pill overdue">Przeciw: ${no}</span>
+          <span class="pill blue">Potrzeba ${required} z ${state.users.length}</span>
+        </div>
+        ${renderVoteList(request)}
+        <div class="split-actions">
+          ${
+            mine
+              ? `<span class="form-hint">Twój głos jest już policzony. Czekamy na resztę domu.</span>`
+              : `<button class="button" type="button" data-action="vote-yes" data-request-id="${request.id}">Zgadzam się</button>
+                 <button class="danger-button" type="button" data-action="vote-no" data-request-id="${request.id}">Odmawiam</button>`
+          }
+          ${
+            isAuthor
+              ? `<button class="ghost-button" type="button" data-action="cancel-request" data-request-id="${request.id}">Wycofaj wniosek</button>`
+              : ""
+          }
+        </div>
+      </section>
+    `;
+  }
+
+  function renderVoteList(request) {
+    if (!request.votes?.length) {
+      return "";
+    }
+
+    return `
+      <div class="vote-list">
+        ${request.votes
+          .map((vote) => {
+            const user = getUser(vote.userId);
+            return `
+              <div class="vote-item">
+                ${avatar(user, "small")}
+                <span class="item-body">
+                  <span class="item-title">${escapeHtml(user.name)} · ${vote.value === "yes" ? "za" : "przeciw"}</span>
+                  ${vote.reason ? `<span class="item-text">${escapeHtml(vote.reason)}</span>` : ""}
+                </span>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
   function renderComments(task) {
     if (!task.comments.length) {
       return `<div class="empty-state"><strong>Bez komentarzy</strong><span>Dodaj pierwszy wpis.</span></div>`;
@@ -2529,6 +2858,124 @@
     } cel ${MONTHLY_GOAL} pkt.${suggestionText}</span>`;
   }
 
+  function cancelOwnRequest(requestId) {
+    const request = getRequest(requestId);
+    if (!request || request.status !== "pending") {
+      return;
+    }
+
+    if (request.requestedById !== state.currentUserId) {
+      toast("Tylko autor", "Wniosek wycofuje osoba, która go złożyła.");
+      return;
+    }
+
+    state.taskRequests = getTaskRequests().filter((item) => item.id !== request.id);
+    const task = getTask(request.taskId);
+    if (task) {
+      task.history.push(historyEntry("Wycofano wniosek", state.currentUserId));
+      task.lastNotifiedAt = null;
+      selectedTaskId = task.id;
+    }
+
+    saveState();
+    toast("Wniosek wycofany", "Zadanie wraca do normalnego trybu.");
+    render();
+  }
+
+  function renderRequestModal() {
+    const task = requestTaskId ? getTask(requestTaskId) : null;
+    if (!task) {
+      return "";
+    }
+
+    const isSkip = requestKind === "skip";
+    const remaining = getRemainingPostpones(state.currentUserId);
+    const suggested = getSuggestedPostponeDate(task);
+    const minDate = toISO(addDays(fromISO(task.dueDate), 1));
+    const glosy = getRequiredVotes();
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="request-modal-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="request-modal-title">${isSkip ? "Nie ma potrzeby" : "Przełóż zadanie"}</h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="task-form" data-form="request" data-task-id="${task.id}" data-kind="${requestKind}">
+            <div class="form-grid">
+              <p class="form-hint wide request-lead">
+                ${escapeHtml(task.title)} · obecny termin ${formatHumanDate(task.dueDate)}
+              </p>
+              ${
+                isSkip
+                  ? `<span class="form-hint wide">Dom zdecyduje w głosowaniu. Potrzeba ${glosy} ${
+                      glosy === 1 ? "głosu" : "głosów"
+                    } „za”, żeby zamknąć zadanie bez wykonania.</span>`
+                  : `<label>
+                      <span class="label">Nowy termin</span>
+                      <input class="input" type="date" name="requestDueDate" value="${escapeAttribute(suggested)}" min="${escapeAttribute(
+                      minDate
+                    )}" required />
+                    </label>
+                    <span class="form-hint wide">Pozostało przełożeń w tym miesiącu: <strong>${remaining}</strong> z ${MONTHLY_POSTPONE_LIMIT}. Potrzeba ${glosy} ${
+                      glosy === 1 ? "głosu" : "głosów"
+                    } „za”.</span>`
+              }
+              <label class="wide">
+                <span class="label">Powód (zobaczą go domownicy)</span>
+                <textarea class="textarea" name="requestReason" rows="3" maxlength="240" required placeholder="${
+                  isSkip ? "Np. trawa jeszcze nie urosła" : "Np. wracam późno z pracy"
+                }"></textarea>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-action="close-modal">Anuluj</button>
+              <button class="button" type="submit" ${
+                !isSkip && !remaining ? "disabled" : ""
+              }>Wyślij wniosek</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderVoteModal() {
+    const request = votingRequestId ? getRequest(votingRequestId) : null;
+    if (!request) {
+      return "";
+    }
+
+    const author = getUser(request.requestedById);
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="vote-modal-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="vote-modal-title">Odmawiasz — uzasadnij</h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="task-form" data-form="vote" data-request-id="${request.id}">
+            <div class="form-grid">
+              <p class="form-hint wide request-lead">
+                ${escapeHtml(author.name)} · ${REQUEST_LABELS[request.type]} · ${escapeHtml(request.taskTitle)}
+              </p>
+              <label class="wide">
+                <span class="label">Uzasadnienie odmowy</span>
+                <textarea class="textarea" name="voteReason" rows="3" maxlength="240" required placeholder="Np. goście w sobotę, musi być zrobione wcześniej"></textarea>
+              </label>
+              <span class="form-hint wide">Trafi w powiadomieniu do osoby, która złożyła wniosek.</span>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-action="close-modal">Anuluj</button>
+              <button class="danger-button" type="submit">Odmawiam</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
   function renderTaskModal() {
     const editingTask = editingTaskId ? getTask(editingTaskId) : null;
     const isEditing = Boolean(editingTask);
@@ -2567,6 +3014,11 @@
               <label>
                 <span class="label">Termin</span>
                 <input class="input" type="date" name="dueDate" value="${escapeAttribute(values.dueDate)}" required />
+                ${
+                  isEditing
+                    ? `<span class="form-hint">Termin można tu tylko przyspieszyć. Przesunięcie na później idzie przez „Przełóż” i głosowanie domu.</span>`
+                    : ""
+                }
               </label>
               <label>
                 <span class="label">Przypomnienie</span>
@@ -2966,6 +3418,8 @@
         activeModal = null;
         editingTaskId = null;
         taskModalKind = "standard";
+        requestTaskId = null;
+        votingRequestId = null;
         render();
       }
       return;
@@ -3030,8 +3484,41 @@
       return;
     }
 
-    if (action === "skip-task") {
-      skipTask(actionElement.dataset.taskId);
+    if (action === "skip-task" || action === "postpone-task") {
+      const task = getTask(actionElement.dataset.taskId);
+      if (!task) {
+        toast("Nie znaleziono zadania", "Odśwież listę i spróbuj ponownie.");
+        return;
+      }
+
+      requestTaskId = task.id;
+      requestKind = action === "skip-task" ? "skip" : "postpone";
+      selectedTaskId = task.id;
+      activeModal = "request";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      queueMicrotask(() => document.querySelector("[name='requestReason']")?.focus());
+      return;
+    }
+
+    if (action === "vote-yes") {
+      voteOnRequest(actionElement.dataset.requestId, "yes");
+      return;
+    }
+
+    if (action === "vote-no") {
+      votingRequestId = actionElement.dataset.requestId;
+      activeModal = "vote";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      queueMicrotask(() => document.querySelector("[name='voteReason']")?.focus());
+      return;
+    }
+
+    if (action === "cancel-request") {
+      cancelOwnRequest(actionElement.dataset.requestId);
       return;
     }
 
@@ -3159,6 +3646,35 @@
       return;
     }
 
+    if (formType === "request") {
+      const data = new FormData(form);
+      const kind = form.dataset.kind === "skip" ? "skip" : "postpone";
+      const created = createTaskRequest(
+        form.dataset.taskId,
+        kind,
+        String(data.get("requestReason") || ""),
+        kind === "postpone" ? String(data.get("requestDueDate") || "") : null
+      );
+
+      if (created) {
+        activeModal = null;
+        requestTaskId = null;
+        render();
+      }
+      return;
+    }
+
+    if (formType === "vote") {
+      const data = new FormData(form);
+      const voted = voteOnRequest(form.dataset.requestId, "no", String(data.get("voteReason") || ""));
+      if (voted) {
+        activeModal = null;
+        votingRequestId = null;
+        render();
+      }
+      return;
+    }
+
     if (formType === "task") {
       const data = new FormData(form);
       const editingTask = editingTaskId ? getTask(editingTaskId) : null;
@@ -3193,6 +3709,13 @@
       }
 
       if (editingTask) {
+        // Furtka „odłożę bez konsekwencji” zamknięta: przez edycję termin da się
+        // tylko przyspieszyć. Przesunięcie na później wymaga wniosku i głosów.
+        if (dueDate > editingTask.dueDate && !editingTask.isRewardTask) {
+          toast("Termin tylko przez wniosek", "Aby przesunąć zadanie na później, użyj przycisku „Przełóż”.");
+          return;
+        }
+
         const reminderChanged =
           editingTask.dueDate !== dueDate ||
           editingTask.reminderTime !== reminderTime ||
@@ -3381,36 +3904,338 @@
     render();
   }
 
-  function skipTask(taskId) {
+  /* ===================== Wnioski i głosowanie =====================
+     „Nie ma potrzeby” i przełożenie terminu nie są już decyzją jednej osoby.
+     Obie akcje zakładają wniosek z pisemnym powodem, o którym dom dostaje
+     powiadomienie i który przechodzi przez głosowanie — wygrywa większość
+     domowników. Dodatkowo każdy domownik ma limit przełożeń na miesiąc. */
+
+  function getTaskRequests() {
+    if (!Array.isArray(state.taskRequests)) {
+      state.taskRequests = [];
+    }
+    return state.taskRequests;
+  }
+
+  function getPendingRequestForTask(taskId) {
+    return getTaskRequests().find((item) => item.taskId === taskId && item.status === "pending") || null;
+  }
+
+  function getRequest(requestId) {
+    return getTaskRequests().find((item) => item.id === requestId) || null;
+  }
+
+  function getPendingRequests() {
+    return getTaskRequests().filter((item) => item.status === "pending");
+  }
+
+  function hasVoted(request, userId) {
+    return (request.votes || []).some((vote) => vote.userId === userId);
+  }
+
+  function countVotes(request, value) {
+    return (request.votes || []).filter((vote) => vote.value === value).length;
+  }
+
+  function getRequiredVotes() {
+    return Math.floor(state.users.length / 2) + 1;
+  }
+
+  function getUsedPostponeCount(userId, periodKey = getPointPeriodKey()) {
+    return getTaskRequests().filter(
+      (item) =>
+        item.type === "postpone" &&
+        item.status === "approved" &&
+        item.requestedById === userId &&
+        getPointPeriodKey(item.resolvedAt || item.createdAt) === periodKey
+    ).length;
+  }
+
+  function getRemainingPostpones(userId) {
+    return Math.max(0, MONTHLY_POSTPONE_LIMIT - getUsedPostponeCount(userId));
+  }
+
+  function notifyUsers(userIds, { title, body, taskId = null, push = false }) {
+    Array.from(new Set(userIds))
+      .filter((id) => id && getUserById(id))
+      .forEach((id) => {
+        state.notifications.unshift({
+          id: uid("notification"),
+          taskId,
+          title,
+          body,
+          recipientUserId: id,
+          read: false,
+          push,
+          createdAt: new Date().toISOString()
+        });
+      });
+
+    state.notifications = state.notifications.slice(0, NOTIFICATIONS_LIMIT);
+  }
+
+  function createTaskRequest(taskId, type, reason, proposedDueDate) {
     const task = getTask(taskId);
-    if (!task || task.status === "done" || isSkipped(task)) {
-      return;
+    if (!task) {
+      toast("Nie znaleziono zadania", "Odśwież listę i spróbuj ponownie.");
+      return false;
+    }
+
+    if (task.status !== "open") {
+      toast("Zadanie jest zamknięte", "Wniosek dotyczy tylko otwartych zadań.");
+      return false;
     }
 
     if (!isAssignee(task, state.currentUserId)) {
-      toast("Najpierw przepisz zadanie", "Tylko osoba przypisana może oznaczyć brak potrzeby.");
-      selectedTaskId = task.id;
+      toast("Najpierw przepisz zadanie", "Wniosek składa osoba, do której należy zadanie.");
+      return false;
+    }
+
+    if (getPendingRequestForTask(task.id)) {
+      toast("Wniosek już czeka", "Dom głosuje nad poprzednim wnioskiem do tego zadania.");
+      return false;
+    }
+
+    const cleanReason = String(reason || "").trim();
+    if (cleanReason.length < MIN_REASON_LENGTH) {
+      toast("Podaj powód", "Domownicy zobaczą go w powiadomieniu — napisz choć jedno zdanie.");
+      return false;
+    }
+
+    if (type === "postpone") {
+      if (!getRemainingPostpones(state.currentUserId)) {
+        toast("Limit wyczerpany", `W tym miesiącu masz już ${MONTHLY_POSTPONE_LIMIT} przełożenia. Kolejne od pierwszego dnia miesiąca.`);
+        return false;
+      }
+      if (!proposedDueDate || proposedDueDate <= task.dueDate) {
+        toast("Wybierz nowy termin", "Nowy termin musi być późniejszy niż obecny.");
+        return false;
+      }
+    }
+
+    const request = {
+      id: uid("request"),
+      taskId: task.id,
+      taskTitle: task.title,
+      type,
+      requestedById: state.currentUserId,
+      reason: cleanReason,
+      previousDueDate: task.dueDate,
+      proposedDueDate: type === "postpone" ? proposedDueDate : null,
+      status: "pending",
+      votes: [{ userId: state.currentUserId, value: "yes", reason: cleanReason, createdAt: new Date().toISOString() }],
+      createdAt: new Date().toISOString(),
+      resolvedAt: null
+    };
+
+    getTaskRequests().unshift(request);
+
+    const author = getUser(state.currentUserId);
+    const opis =
+      type === "skip"
+        ? `${author.name} chce zamknąć „${task.title}” bez wykonania.`
+        : `${author.name} chce przełożyć „${task.title}” na ${formatHumanDate(proposedDueDate)}.`;
+
+    task.history.push(
+      historyEntry(
+        type === "skip"
+          ? `Wniosek: nie ma potrzeby — ${cleanReason}`
+          : `Wniosek: przełożenie na ${formatHumanDate(proposedDueDate)} — ${cleanReason}`,
+        state.currentUserId
+      )
+    );
+
+    notifyUsers(
+      state.users.map((user) => user.id).filter((id) => id !== state.currentUserId),
+      {
+        title: type === "skip" ? "Wniosek: nie ma potrzeby" : "Wniosek o przełożenie",
+        body: `${opis} Powód: ${cleanReason}. Zagłosuj w zadaniu.`,
+        taskId: task.id,
+        push: true
+      }
+    );
+
+    selectedTaskId = task.id;
+    resolveRequestIfDecided(request);
+    saveState();
+    render();
+    return true;
+  }
+
+  function voteOnRequest(requestId, value, reason = "") {
+    const request = getRequest(requestId);
+    if (!request || request.status !== "pending") {
+      toast("Wniosek rozstrzygnięty", "Ten wniosek został już zamknięty.");
       render();
+      return false;
+    }
+
+    if (hasVoted(request, state.currentUserId)) {
+      toast("Głos już oddany", "Każdy domownik głosuje raz.");
+      return false;
+    }
+
+    const cleanReason = String(reason || "").trim();
+    if (value === "no" && cleanReason.length < MIN_REASON_LENGTH) {
+      toast("Uzasadnij odmowę", "Osoba od zadania dostanie Twoje uzasadnienie w powiadomieniu.");
+      return false;
+    }
+
+    request.votes.push({
+      userId: state.currentUserId,
+      value: value === "no" ? "no" : "yes",
+      reason: cleanReason,
+      createdAt: new Date().toISOString()
+    });
+
+    const task = getTask(request.taskId);
+    if (task) {
+      task.history.push(
+        historyEntry(
+          value === "no" ? `Głos przeciw${cleanReason ? ` — ${cleanReason}` : ""}` : "Głos za wnioskiem",
+          state.currentUserId
+        )
+      );
+      selectedTaskId = task.id;
+    }
+
+    resolveRequestIfDecided(request);
+
+    // Gdy głos od razu przesądza sprawę, autor dostaje jedno powiadomienie
+    // o decyzji (z uzasadnieniami w treści) — bez dublowania go sprzeciwem.
+    if (value === "no" && request.status === "pending" && request.requestedById !== state.currentUserId) {
+      notifyUsers([request.requestedById], {
+        title: "Sprzeciw wobec wniosku",
+        body: `${getUser(state.currentUserId).name} nie zgadza się na „${request.taskTitle}”. Uzasadnienie: ${cleanReason}`,
+        taskId: request.taskId,
+        push: true
+      });
+    }
+    saveState();
+    render();
+    return true;
+  }
+
+  function resolveRequestIfDecided(request) {
+    const required = getRequiredVotes();
+    const yes = countVotes(request, "yes");
+    const no = countVotes(request, "no");
+    const everyoneVoted = (request.votes || []).length >= state.users.length;
+
+    if (yes >= required) {
+      approveRequest(request);
       return;
     }
 
+    if (no >= required || (everyoneVoted && yes < required)) {
+      rejectRequest(request);
+    }
+  }
+
+  function approveRequest(request) {
+    request.status = "approved";
+    request.resolvedAt = new Date().toISOString();
+
+    const task = getTask(request.taskId);
+    if (!task || task.status !== "open") {
+      return;
+    }
+
+    if (request.type === "skip") {
+      applySkipToTask(task, request);
+    } else {
+      applyPostponeToTask(task, request);
+    }
+  }
+
+  function rejectRequest(request) {
+    request.status = "rejected";
+    request.resolvedAt = new Date().toISOString();
+
+    const powody = (request.votes || [])
+      .filter((vote) => vote.value === "no" && vote.reason)
+      .map((vote) => `${getUser(vote.userId).name}: ${vote.reason}`)
+      .join(" · ");
+
+    const task = getTask(request.taskId);
+    if (task) {
+      task.history.push(historyEntry(`Dom odrzucił wniosek (${REQUEST_LABELS[request.type]})`, state.currentUserId));
+      task.lastNotifiedAt = null;
+    }
+
+    notifyUsers([request.requestedById], {
+      title: "Wniosek odrzucony",
+      body: `„${request.taskTitle}” zostaje bez zmian. ${powody || "Domownicy zagłosowali przeciw."}`,
+      taskId: request.taskId,
+      push: true
+    });
+
+    if (request.requestedById === state.currentUserId) {
+      toast("Wniosek odrzucony", "Zadanie zostaje w obecnym terminie.");
+    }
+  }
+
+  function applySkipToTask(task, request) {
     task.status = "skipped";
     task.completedAt = new Date().toISOString();
-    task.skippedById = state.currentUserId;
-    task.history.push(historyEntry("Oznaczono: nie było potrzeby (0 pkt)", state.currentUserId));
-    selectedTaskId = task.id;
+    task.skippedById = request.requestedById;
+    task.history.push(historyEntry(`Dom zgodził się: nie było potrzeby (0 pkt) — ${request.reason}`, state.currentUserId));
 
+    let nextInfo = "Zadanie zamknięte bez punktów.";
     if (task.recurrence.type !== "none" && !task.isRewardTask) {
       const nextTask = createNextRecurringTask(task);
       task.nextRecurringTaskId = nextTask.id;
       state.tasks.unshift(nextTask);
-      toast("Nie było potrzeby", `Bez punktów. Kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`);
-    } else {
-      toast("Nie było potrzeby", "Zadanie zamknięte bez punktów.");
+      nextInfo = `Kolejny termin: ${formatHumanDate(nextTask.dueDate)}.`;
     }
 
-    saveState();
-    render();
+    notifyUsers(
+      state.users.map((user) => user.id).filter((id) => id !== state.currentUserId),
+      {
+        title: "Zamknięto: nie było potrzeby",
+        body: `„${task.title}” — ${request.reason}. ${nextInfo}`,
+        taskId: task.id,
+        push: false
+      }
+    );
+
+    toast("Nie było potrzeby", nextInfo);
+  }
+
+  function applyPostponeToTask(task, request) {
+    const previous = task.dueDate;
+    task.dueDate = request.proposedDueDate;
+    task.assignedAt = new Date().toISOString();
+    task.lastNotifiedAt = null;
+    task.history.push(
+      historyEntry(
+        `Dom zgodził się na przełożenie: ${formatHumanDate(previous)} → ${formatHumanDate(task.dueDate)} — ${request.reason}`,
+        state.currentUserId
+      )
+    );
+
+    const zostalo = getRemainingPostpones(request.requestedById);
+    notifyUsers(
+      state.users.map((user) => user.id).filter((id) => id !== state.currentUserId),
+      {
+        title: "Zadanie przełożone",
+        body: `„${task.title}” → ${formatHumanDate(task.dueDate)}. Powód: ${request.reason}`,
+        taskId: task.id,
+        push: false
+      }
+    );
+
+    selectedDate = task.dueDate;
+    calendarCursor = startOfMonth(fromISO(task.dueDate));
+    toast("Przełożono zadanie", `Nowy termin: ${formatHumanDate(task.dueDate)}. Pozostało przełożeń w tym miesiącu: ${zostalo}.`);
+  }
+
+  function getSuggestedPostponeDate(task) {
+    const today = toISO(new Date());
+    const base = task.dueDate > today ? task.dueDate : today;
+    const proposal =
+      task.recurrence.type !== "none" ? getNextDueDate(task.dueDate, task.recurrence.type) : toISO(addDays(fromISO(base), 3));
+    return proposal > base ? proposal : toISO(addDays(fromISO(base), 1));
   }
 
   function reopenTask(taskId) {
@@ -3420,6 +4245,7 @@
     }
 
     const wasSkipped = isSkipped(task);
+    state.taskRequests = getTaskRequests().filter((item) => item.taskId !== task.id || item.status !== "pending");
     task.status = "open";
     task.completedAt = null;
     task.completedById = null;
@@ -3453,6 +4279,9 @@
     state.tasks = state.tasks.filter((item) => item.id !== task.id);
     state.pointEvents = state.pointEvents.filter((event) => event.taskId !== task.id);
     state.notifications = state.notifications.filter((item) => item.taskId !== task.id);
+    // Rozstrzygnięte wnioski zostają (liczą się do miesięcznego limitu), ale
+    // trwające głosowanie nad nieistniejącym zadaniem nie ma już sensu.
+    state.taskRequests = getTaskRequests().filter((item) => item.taskId !== task.id || item.status !== "pending");
     state.rewardClaims = state.rewardClaims.filter((claim) => claim.taskId !== task.id);
     rememberDeletedTask(task.id);
 
@@ -3704,7 +4533,7 @@
         });
       });
 
-    state.notifications = state.notifications.slice(0, 30);
+    state.notifications = state.notifications.slice(0, NOTIFICATIONS_LIMIT);
   }
 
   function maybeSuggestReassign(task) {
@@ -3747,7 +4576,7 @@
       }
     });
 
-    state.notifications = state.notifications.slice(0, 30);
+    state.notifications = state.notifications.slice(0, NOTIFICATIONS_LIMIT);
     saveState();
     if (!activeModal) {
       render();
@@ -3772,19 +4601,21 @@
         return false;
       }
 
+      // Zadanie z wnioskiem w głosowaniu czeka na decyzję domu — nie ma po co
+      // o nim przypominać, dopóki nie wiadomo, czy zostaje na dziś.
+      if (getPendingRequestForTask(task.id)) {
+        return false;
+      }
+
       const [hour, minute] = task.reminderTime.split(":").map(Number);
       const reminderMinutes = hour * 60 + minute;
       if (currentMinutes < reminderMinutes) {
         return false;
       }
 
-      if (!task.lastNotifiedAt) {
-        return true;
-      }
-
-      const last = new Date(task.lastNotifiedAt);
-      const diff = (now - last) / 60000;
-      return diff >= REMINDER_REPEAT_MINUTES;
+      // Jedno przypomnienie na zadanie na dobę. Wcześniej powtarzało się co
+      // 30 minut aż do północy, co przy kilku zaległościach zasypywało telefon.
+      return !task.lastNotifiedAt || toISO(new Date(task.lastNotifiedAt)) !== today;
     });
   }
 
@@ -3798,11 +4629,11 @@
         await serviceWorkerRegistration.showNotification(title, {
           body,
           tag: taskId,
-          icon: "./icon.svg",
-          badge: "./icon.svg"
+          icon: "./icon-192.png?v=48",
+          badge: "./icon-192.png?v=48"
         });
       } else {
-        const notification = new Notification(title, { body, icon: "./icon.svg", tag: taskId });
+        const notification = new Notification(title, { body, icon: "./icon-192.png?v=48", tag: taskId });
         notification.onclick = () => window.focus();
       }
     } catch (error) {
@@ -4315,7 +5146,7 @@
       });
     });
 
-    state.notifications = state.notifications.slice(0, 40);
+    state.notifications = state.notifications.slice(0, NOTIFICATIONS_LIMIT);
     return changed;
   }
 
@@ -4448,6 +5279,9 @@
     if (recurrenceType === "biweekly") {
       return toISO(addDays(date, 14));
     }
+    if (recurrenceType === "triweekly") {
+      return toISO(addDays(date, 21));
+    }
     if (recurrenceType === "monthly") {
       return toISO(addMonths(date, 1));
     }
@@ -4479,11 +5313,16 @@
     return next;
   }
 
+  // Kolejne wystąpienie cyklu musi wypaść PO dzisiejszym dniu. Wcześniej pętla
+  // kończyła się na „dziś”, więc zamknięcie zaległego zadania (a zwłaszcza
+  // „nie ma potrzeby”) natychmiast tworzyło nowe zadanie na dziś — z terminem,
+  // który już minął. Efekt: przypomnienia i „niewykonane zadanie” tego samego
+  // wieczoru, mimo że zadanie zostało właśnie zamknięte.
   function getCaughtUpDueDate(dateIso, recurrence) {
     const today = toISO(new Date());
     let next = dateIso;
     let guard = 0;
-    while (next < today && guard < 1000) {
+    while (next <= today && guard < 1000) {
       next = getNextValidDueDate(next, recurrence);
       guard += 1;
     }

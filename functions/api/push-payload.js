@@ -149,7 +149,8 @@ async function ensurePushSchema(db) {
         created_at TEXT NOT NULL,
         sent_at TEXT,
         delivered_at TEXT,
-        error TEXT
+        error TEXT,
+        attempts INTEGER DEFAULT 0
       )`
     )
     .run();

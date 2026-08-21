@@ -28,8 +28,13 @@ CREATE TABLE IF NOT EXISTS push_messages (
   created_at TEXT NOT NULL,
   sent_at TEXT,
   delivered_at TEXT,
-  error TEXT
+  error TEXT,
+  attempts INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_push_messages_delivery
   ON push_messages (subscription_id, delivered_at, created_at);
+
+-- Migracja dla istniejacych baz: licznik prob wysylki.
+-- Jesli kolumna juz istnieje, D1 zglosi blad "duplicate column name" - mozna go zignorowac.
+ALTER TABLE push_messages ADD COLUMN attempts INTEGER DEFAULT 0;

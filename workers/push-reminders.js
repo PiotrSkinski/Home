@@ -4,6 +4,7 @@ const DAILY_DIGEST_WINDOW_MINUTES = 180;
 const TASK_REMINDER_WINDOW_MINUTES = 90;
 const EVENING_REMINDER_WINDOW_MINUTES = 120;
 const TIME_ZONE = "Europe/Warsaw";
+const MAX_SEND_ATTEMPTS = 3;
 const DEFAULT_VAPID_SUBJECT = "mailto:homejob@example.com";
 
 export default {
@@ -38,7 +39,12 @@ async function runReminderJob(env) {
     if (isHouseholdPaused(state, localNow.date)) {
       continue;
     }
-    const openTasks = state.tasks.filter((task) => task.status === "open");
+    // Zadanie z wnioskiem w głosowaniu czeka na decyzję domu — przypomnienia
+    // o nim milkną, dopóki nie wiadomo, czy zostaje w dzisiejszym terminie.
+    const votedOnTaskIds = new Set(
+      (state.taskRequests || []).filter((request) => request?.status === "pending").map((request) => request.taskId)
+    );
+    const openTasks = state.tasks.filter((task) => task.status === "open" && !votedOnTaskIds.has(task.id));
 
     if (isWithinTimeWindow(localNow.minutes, timeToMinutes(DAILY_DIGEST_TIME), DAILY_DIGEST_WINDOW_MINUTES)) {
       await sendDailyDigest(env, householdId, state, openTasks, localNow);
@@ -49,6 +55,8 @@ async function runReminderJob(env) {
     if (isWithinTimeWindow(localNow.minutes, timeToMinutes(EVENING_REMINDER_TIME), EVENING_REMINDER_WINDOW_MINUTES)) {
       await sendEveningReminder(env, householdId, state, openTasks, localNow);
     }
+
+    await sendHouseholdNotices(env, householdId, state);
   }
 }
 
@@ -64,22 +72,39 @@ function isHouseholdPaused(state, todayIso) {
   return Boolean(pause && pause.from && pause.until && todayIso >= pause.from && todayIso <= pause.until);
 }
 
+// Poranny przegląd zbiera też zaległości. Wcześniej każde zaległe zadanie
+// wysyłało własne przypomnienie codziennie o swojej godzinie — przy kilku
+// zaległościach telefon dzwonił kilka razy dziennie w kółko.
 async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
   for (const user of state.users) {
-    const tasks = openTasks.filter((task) => taskAssignees(task).includes(user.id) && task.dueDate === localNow.date);
-    if (!tasks.length) {
+    const mine = openTasks.filter((task) => taskAssignees(task).includes(user.id));
+    const today = mine.filter((task) => task.dueDate === localNow.date);
+    const overdue = mine.filter((task) => task.dueDate < localNow.date);
+
+    if (!today.length && !overdue.length) {
       continue;
     }
 
-    const body = `${user.name}, dziś masz ${tasks.length} ${
-      tasks.length === 1 ? "zadanie" : tasks.length < 5 ? "zadania" : "zadań"
-    }:\n${formatTaskList(tasks)}`;
+    const parts = [];
+    if (today.length) {
+      parts.push(
+        `${user.name}, dziś masz ${today.length} ${
+          today.length === 1 ? "zadanie" : today.length < 5 ? "zadania" : "zadań"
+        }:\n${formatTaskList(today)}`
+      );
+    } else {
+      parts.push(`${user.name}, na dziś nic nie zaplanowano.`);
+    }
+
+    if (overdue.length) {
+      parts.push(`Zaległe (${overdue.length}):\n${formatTaskList(overdue)}`);
+    }
 
     await pushToUser(env, householdId, user.id, {
       kind: "daily",
       dedupeKey: `${householdId}:${user.id}:daily:${localNow.date}`,
-      title: "Plan dnia w HomeJob",
-      body,
+      title: today.length ? "Plan dnia w HomeJob" : "Zaległe zadania",
+      body: parts.join("\n\n"),
       url: "./index.html",
       tag: `homejob-daily-${localNow.date}`,
       taskId: null
@@ -87,23 +112,22 @@ async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
   }
 }
 
+// Osobne przypomnienie dostają wyłącznie zadania na dziś. Zaległe idą raz
+// dziennie w porannym przeglądzie.
 async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
   const dueTasks = openTasks.filter(
     (task) =>
-      task.dueDate <= localNow.date &&
+      task.dueDate === localNow.date &&
       isWithinTimeWindow(localNow.minutes, timeToMinutes(task.reminderTime), TASK_REMINDER_WINDOW_MINUTES)
   );
 
   for (const task of dueTasks) {
-    const isOverdue = task.dueDate < localNow.date;
     for (const assigneeId of taskAssignees(task)) {
       await pushToUser(env, householdId, assigneeId, {
         kind: "task",
         dedupeKey: `${householdId}:${assigneeId}:task:${task.id}:${localNow.date}:${task.reminderTime}`,
-        title: isOverdue ? "Zaległe zadanie" : "Czas na zadanie",
-        body: isOverdue
-          ? `To nadal czeka: ${task.title}`
-          : `Masz zadanie do wykonania: ${task.title}`,
+        title: "Czas na zadanie",
+        body: `Masz zadanie do wykonania: ${task.title}`,
         url: `./index.html?task=${encodeURIComponent(task.id)}`,
         tag: `homejob-task-${task.id}-${localNow.date}`,
         taskId: task.id
@@ -131,6 +155,36 @@ async function sendEveningReminder(env, householdId, state, openTasks, localNow)
   }
 }
 
+// Wnioski o przełożenie i „nie ma potrzeby” muszą dojść do domowników od razu,
+// a nie dopiero przy otwarciu aplikacji. Aplikacja oznacza takie wpisy flagą
+// push, a każdy leci dokładnie raz (klucz dedupe = identyfikator wpisu).
+async function sendHouseholdNotices(env, householdId, state) {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+  for (const notice of state.notifications || []) {
+    if (!notice?.push || !notice.recipientUserId || notice.read) {
+      continue;
+    }
+
+    const createdAt = Date.parse(notice.createdAt || "");
+    if (!Number.isFinite(createdAt) || createdAt < cutoff) {
+      continue;
+    }
+
+    await pushToUser(env, householdId, notice.recipientUserId, {
+      kind: "notice",
+      dedupeKey: `${householdId}:${notice.recipientUserId}:notice:${notice.id}`,
+      title: notice.title || "HomeJob",
+      body: notice.body || "Sprawdź zadania w HomeJob.",
+      url: notice.taskId ? `./index.html?task=${encodeURIComponent(notice.taskId)}` : "./index.html",
+      tag: `homejob-notice-${notice.id}`,
+      // Bez task_id, żeby filtr „nieaktualnych” nie skasował decyzji o zadaniu,
+      // które właśnie przestało być otwarte.
+      taskId: null
+    });
+  }
+}
+
 async function pushToUser(env, householdId, userId, message) {
   const subscriptions = await env.DB
     .prepare("SELECT * FROM push_subscriptions WHERE household_id = ?1 AND user_id = ?2")
@@ -146,11 +200,18 @@ async function createMessageAndSendPush(env, subscription, householdId, userId, 
   const dedupeKey = `${subscription.id}:${message.dedupeKey}`;
   const id = `msg_${await sha256(dedupeKey)}`;
   const existing = await env.DB
-    .prepare("SELECT id, sent_at FROM push_messages WHERE dedupe_key = ?1")
+    .prepare("SELECT * FROM push_messages WHERE dedupe_key = ?1")
     .bind(dedupeKey)
     .first();
 
   if (existing?.sent_at) {
+    return;
+  }
+
+  // Nieudana wysyłka wracała co minutę przez całe okno przypomnienia. Jeśli
+  // usługa push mimo błędu dostarczała powiadomienie, telefon dostawał je
+  // kilkadziesiąt razy — stąd twardy limit prób.
+  if (Number(existing?.attempts || 0) >= MAX_SEND_ATTEMPTS) {
     return;
   }
 
@@ -179,6 +240,8 @@ async function createMessageAndSendPush(env, subscription, householdId, userId, 
       .run();
   }
 
+  await bumpAttempts(env.DB, existing?.id || id);
+
   try {
     const result = await sendWebPush(env, subscription.endpoint);
     await env.DB
@@ -194,6 +257,17 @@ async function createMessageAndSendPush(env, subscription, householdId, userId, 
       .prepare("UPDATE push_messages SET error = ?1 WHERE id = ?2")
       .bind(String(error?.message || error), existing?.id || id)
       .run();
+  }
+}
+
+async function bumpAttempts(db, id) {
+  try {
+    await db
+      .prepare("UPDATE push_messages SET attempts = COALESCE(attempts, 0) + 1 WHERE id = ?1")
+      .bind(id)
+      .run();
+  } catch (_error) {
+    // Starsza baza bez kolumny attempts: limit prób po prostu nie działa.
   }
 }
 
@@ -347,10 +421,17 @@ async function ensurePushSchema(db) {
         created_at TEXT NOT NULL,
         sent_at TEXT,
         delivered_at TEXT,
-        error TEXT
+        error TEXT,
+        attempts INTEGER DEFAULT 0
       )`
     )
     .run();
+
+  try {
+    await db.prepare("ALTER TABLE push_messages ADD COLUMN attempts INTEGER DEFAULT 0").run();
+  } catch (_error) {
+    // Kolumna już istnieje — tak wygląda ta migracja przy każdym kolejnym uruchomieniu.
+  }
 
   await db
     .prepare(
