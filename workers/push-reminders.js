@@ -72,11 +72,21 @@ function isHouseholdPaused(state, todayIso) {
   return Boolean(pause && pause.from && pause.until && todayIso >= pause.from && todayIso <= pause.until);
 }
 
+// Nieobecny domownik nie dostaje pushy — tak samo jak w aplikacji.
+function isUserAbsent(state, userId, todayIso) {
+  const user = (state.users || []).find((item) => item.id === userId);
+  const absence = user?.absence;
+  return Boolean(absence && absence.from && absence.until && todayIso >= absence.from && todayIso <= absence.until);
+}
+
 // Poranny przegląd zbiera też zaległości. Wcześniej każde zaległe zadanie
 // wysyłało własne przypomnienie codziennie o swojej godzinie — przy kilku
 // zaległościach telefon dzwonił kilka razy dziennie w kółko.
 async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
   for (const user of state.users) {
+    if (isUserAbsent(state, user.id, localNow.date)) {
+      continue;
+    }
     const mine = openTasks.filter((task) => taskAssignees(task).includes(user.id));
     const today = mine.filter((task) => task.dueDate === localNow.date);
     const overdue = mine.filter((task) => task.dueDate < localNow.date);
@@ -123,6 +133,9 @@ async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
 
   for (const task of dueTasks) {
     for (const assigneeId of taskAssignees(task)) {
+      if (isUserAbsent(state, assigneeId, localNow.date)) {
+        continue;
+      }
       await pushToUser(env, householdId, assigneeId, {
         kind: "task",
         dedupeKey: `${householdId}:${assigneeId}:task:${task.id}:${localNow.date}:${task.reminderTime}`,
@@ -138,6 +151,9 @@ async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
 
 async function sendEveningReminder(env, householdId, state, openTasks, localNow) {
   for (const user of state.users) {
+    if (isUserAbsent(state, user.id, localNow.date)) {
+      continue;
+    }
     const tasks = openTasks.filter((task) => taskAssignees(task).includes(user.id) && task.dueDate === localNow.date);
     if (!tasks.length) {
       continue;

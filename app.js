@@ -84,6 +84,7 @@
   let votingRequestId = null;
   let notificationPanelOpen = false;
   let lastRenderedViewKey = null;
+  let pauseModalTarget = "dom";
   let knownRewardClaimIds = null;
   let countedValues = new Map();
   let moreMenuOpen = false;
@@ -246,7 +247,7 @@
         id: data.household?.id || data.id || null,
         name: data.household?.name || data.name || "HomeJob",
         inviteCode: data.household?.inviteCode || data.inviteCode || "",
-        pause: normalizeHouseholdPause(data.household?.pause),
+        pause: normalizeDateRange(data.household?.pause),
         homeBonus: data.household?.homeBonus || null,
         carryoverDonePeriod: data.household?.carryoverDonePeriod || null
       },
@@ -276,7 +277,8 @@
         name: user.name || "Domownik",
         color: user.color || COLORS[0],
         avatar: user.avatar || (user.name || "D").slice(0, 1).toUpperCase(),
-        pin: normalizePin(user.pin)
+        pin: normalizePin(user.pin),
+        absence: normalizeDateRange(user.absence)
       };
     });
 
@@ -399,7 +401,7 @@
     ).sort((a, b) => a - b);
   }
 
-  function normalizeHouseholdPause(value) {
+  function normalizeDateRange(value) {
     if (!value || !value.from || !value.until) {
       return null;
     }
@@ -421,18 +423,75 @@
   }
 
   function countPausedDaysInRange(startDate, endDate) {
-    const pause = state.household.pause;
-    if (!pause) {
+    return countRangeOverlap(state.household.pause, startDate, endDate);
+  }
+
+  function countRangeOverlap(range, startDate, endDate) {
+    if (!range) {
       return 0;
     }
-    const pauseStart = fromISO(pause.from);
-    const pauseEnd = fromISO(pause.until);
-    const overlapStart = pauseStart > startDate ? pauseStart : startDate;
-    const overlapEnd = pauseEnd < endDate ? pauseEnd : endDate;
+    const rangeStart = fromISO(range.from);
+    const rangeEnd = fromISO(range.until);
+    const overlapStart = rangeStart > startDate ? rangeStart : startDate;
+    const overlapEnd = rangeEnd < endDate ? rangeEnd : endDate;
     if (overlapStart > overlapEnd) {
       return 0;
     }
     return daysBetween(overlapStart, overlapEnd) + 1;
+  }
+
+  /* ============ Nieobecność domownika ============
+     Pauza domu ("wyjeżdżamy wszyscy") i nieobecność pojedynczej osoby działają
+     tak samo z punktu widzenia jednego domownika — stąd wspólne funkcje. */
+  function getUserAbsence(userId) {
+    return getUserById(userId)?.absence || null;
+  }
+
+  function isUserAbsentOn(userId, dateIso) {
+    if (isDateWithinPause(dateIso)) {
+      return true;
+    }
+    const absence = getUserAbsence(userId);
+    return Boolean(absence && dateIso >= absence.from && dateIso <= absence.until);
+  }
+
+  function isUserAbsentNow(userId) {
+    return isUserAbsentOn(userId, toISO(new Date()));
+  }
+
+  // Dni, za które nie nalicza się kara zwłoki: pauza domu plus własna nieobecność.
+  // Zakresy mogą się nakładać, więc liczymy sumę mnogościową, nie sumę długości.
+  function countExcusedDaysInRange(userId, startDate, endDate) {
+    const pause = state.household.pause;
+    const absence = getUserAbsence(userId);
+    if (!pause && !absence) {
+      return 0;
+    }
+    if (!pause || !absence) {
+      return countRangeOverlap(pause || absence, startDate, endDate);
+    }
+
+    let dni = 0;
+    for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
+      if (isUserAbsentOn(userId, toISO(d))) {
+        dni += 1;
+      }
+    }
+    return dni;
+  }
+
+  // Kto jest dostępny danego dnia — używane przy rotacji zadań cyklicznych.
+  function getNextAvailableUserId(currentId, dateIso) {
+    const index = state.users.findIndex((user) => user.id === currentId);
+    const start = index === -1 ? 0 : index;
+    for (let step = 1; step <= state.users.length; step += 1) {
+      const kandydat = state.users[(start + step) % state.users.length];
+      if (!isUserAbsentOn(kandydat.id, dateIso)) {
+        return kandydat.id;
+      }
+    }
+    // Wszyscy nieobecni — zostawiamy zwykłą kolejność.
+    return getNextUserId(currentId);
   }
 
   function getAssigneeIds(task) {
@@ -1573,8 +1632,8 @@
   }
 
   function renderHouseholdBadge() {
-    const isPaused = isHouseholdPausedNow();
-    const hasPause = Boolean(state.household.pause);
+    const isPaused = isHouseholdPausedNow() || state.users.some((user) => isUserAbsentNow(user.id));
+    const hasPause = Boolean(state.household.pause) || state.users.some((user) => user.absence);
 
     return `
       <div class="household-badge household-badge-row">
@@ -1772,22 +1831,47 @@
   }
 
   function renderPauseModal() {
-    const pause = state.household.pause;
     const today = toISO(new Date());
+    // Domyślnie edytujemy to, co już trwa: własną nieobecność albo pauzę domu.
+    const wlasna = getUserAbsence(state.currentUserId);
+    const zakres = pauseModalTarget === "dom" ? state.household.pause : getUserAbsence(pauseModalTarget);
     const values = {
-      from: pause?.from || today,
-      until: pause?.until || today
+      from: zakres?.from || today,
+      until: zakres?.until || today
     };
+    const edycja = Boolean(zakres);
+
+    const opcje = [
+      { id: "dom", nazwa: "Cały dom", aktywna: Boolean(state.household.pause) },
+      ...state.users.map((user) => ({ id: user.id, nazwa: user.name, aktywna: Boolean(user.absence) }))
+    ];
 
     return `
       <div class="modal-backdrop" role="presentation" data-action="close-modal">
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="pause-modal-title">
           <div class="modal-head">
-            <h2 class="modal-title" id="pause-modal-title">${pause ? "Edytuj wstrzymanie" : "Wstrzymaj zadania"}</h2>
+            <h2 class="modal-title" id="pause-modal-title">${edycja ? "Edytuj nieobecność" : "Wstrzymaj zadania"}</h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
           <form class="task-form" data-form="pause">
             <div class="form-grid">
+              <label class="wide">
+                <span class="label">Kogo dotyczy</span>
+                <div class="weekday-picker">
+                  ${opcje
+                    .map(
+                      (opcja) => `
+                        <button
+                          class="chip weekday-chip ${opcja.id === pauseModalTarget ? "is-active" : ""}"
+                          type="button"
+                          data-action="pause-target"
+                          data-target="${opcja.id}"
+                        >${escapeHtml(opcja.nazwa)}${opcja.aktywna ? " ●" : ""}</button>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </label>
               <label>
                 <span class="label">Od</span>
                 <input class="input" type="date" name="pauseFrom" value="${escapeAttribute(values.from)}" required />
@@ -1796,10 +1880,15 @@
                 <span class="label">Do</span>
                 <input class="input" type="date" name="pauseUntil" value="${escapeAttribute(values.until)}" required />
               </label>
-              <span class="form-hint wide">W tym czasie zadania nie wysyłają przypomnień ani nie naliczają zaległości, a cykliczne przesuwają się na termin po powrocie.</span>
+              <input type="hidden" name="pauseTarget" value="${escapeAttribute(pauseModalTarget)}" />
+              <span class="form-hint wide">${
+                pauseModalTarget === "dom"
+                  ? "Cały dom odpoczywa: nikt nie dostaje przypomnień, nikomu nie rosną zaległości."
+                  : "Ta osoba nie dostaje przypomnień i nie zbiera kar za zwłokę. Rotacja zadań cyklicznych ją omija, a kto przejmie jej zadanie, robi to jako zastępstwo — bez transferu punktów."
+              }</span>
             </div>
             ${
-              pause
+              edycja
                 ? `<div class="status-line" style="margin-top: 12px">
                     <button class="ghost-button" type="button" data-action="resume-household">Wznów teraz</button>
                   </div>`
@@ -1807,13 +1896,14 @@
             }
             <div class="form-actions">
               <button class="ghost-button" type="button" data-action="close-modal">Anuluj</button>
-              <button class="button" type="submit">${pause ? "Zapisz zmiany" : "Wstrzymaj zadania"}</button>
+              <button class="button" type="submit">${edycja ? "Zapisz zmiany" : "Wstrzymaj"}</button>
             </div>
           </form>
         </section>
       </div>
     `;
   }
+
 
   function renderActiveView() {
     if (activeView === "task-detail") {
@@ -2232,10 +2322,11 @@
           ${state.users
             .map((user) => {
               const assigned = openTasks.filter((task) => isAssignee(task, user.id));
+              const nieobecny = isUserAbsentNow(user.id);
               const overdue = assigned.filter((task) => isOverdue(task)).length;
               const today = assigned.filter((task) => isToday(task)).length;
               return `
-                <article class="person-card">
+                <article class="person-card${nieobecny ? " is-away" : ""}">
                   <div class="person-card-head">
                     ${avatar(user)}
                     <div>
@@ -2243,6 +2334,13 @@
                       <p>${formatPoints(getUserPoints(user.id))} pkt w tym miesiącu</p>
                     </div>
                   </div>
+                  ${
+                    nieobecny
+                      ? `<p class="away-note">Nieobecny${
+                          user.absence ? ` do ${formatHumanDate(user.absence.until)}` : ""
+                        } — zadania bez przypomnień i bez kar</p>`
+                      : ""
+                  }
                   <div class="compact-stats">
                     <span><strong>${today}</strong> dziś</span>
                     <span><strong>${overdue}</strong> zaległe</span>
@@ -2511,6 +2609,11 @@
       isOverdue(task) ? `<span class="pill overdue">Zaległe</span>` : "",
       task.status === "done" ? `<span class="pill done">Ukończone</span>` : "",
       isSkipped(task) ? `<span class="pill skipped">Nie było potrzeby</span>` : "",
+      !closed && getAssigneeIds(task).some((id) => isUserAbsentNow(id))
+        ? `<span class="pill away">${escapeHtml(
+            getAssignees(task).filter((user) => isUserAbsentNow(user.id)).map((user) => user.name).join(", ")
+          )} — nieobecny</span>`
+        : "",
       getPendingRequestForTask(task.id) ? `<span class="pill amber">Głosowanie</span>` : "",
       assignees.length > 1 ? `<span class="pill blue">${assignees.length} osoby</span>` : "",
       task.recurrence.type !== "none" ? `<span class="pill blue">${RECURRENCE[task.recurrence.type]}</span>` : ""
@@ -2608,7 +2711,9 @@
                   ? `<button class="button" type="button" data-action="complete-task" data-task-id="${task.id}">${
                       shopping ? "Zakończ zakupy" : "Oznacz jako ukończone"
                     }</button>`
-                  : `<button class="ghost-button" type="button" data-action="assign-me" data-task-id="${task.id}">Przepisz na mnie</button>`
+                  : `<button class="ghost-button" type="button" data-action="assign-me" data-task-id="${task.id}">${
+                    getAssigneeIds(task).some((id) => isUserAbsentNow(id)) ? "Zastąp (bez transferu pkt)" : "Przepisz na mnie"
+                  }</button>`
             }
             ${
               !closed && canComplete && !shopping && !pendingRequest
@@ -3355,6 +3460,13 @@
     }
 
     if (action === "open-pause-modal") {
+      // Otwieramy na tym, co już trwa: własna nieobecność ma pierwszeństwo,
+      // potem pauza domu, a jeśli nic nie trwa — na sobie.
+      pauseModalTarget = getUserAbsence(state.currentUserId)
+        ? state.currentUserId
+        : state.household.pause
+          ? "dom"
+          : state.currentUserId;
       activeModal = "pause";
       notificationPanelOpen = false;
       moreMenuOpen = false;
@@ -3362,11 +3474,25 @@
       return;
     }
 
+    if (action === "pause-target") {
+      pauseModalTarget = actionElement.dataset.target;
+      render();
+      return;
+    }
+
     if (action === "resume-household") {
-      state.household.pause = null;
+      if (pauseModalTarget === "dom") {
+        state.household.pause = null;
+      } else {
+        const osoba = getUserById(pauseModalTarget);
+        if (osoba) {
+          osoba.absence = null;
+        }
+      }
+      const nazwaCelu = pauseModalTarget === "dom" ? "Cały dom" : getUser(pauseModalTarget).name;
       activeModal = null;
       saveState();
-      toast("Wznowiono zadania", "Przypomnienia i zaległości znów naliczają się normalnie.");
+      toast(`Wznowiono: ${nazwaCelu}`, "Przypomnienia i zaległości znów naliczają się normalnie.");
       render();
       return;
     }
@@ -3638,10 +3764,22 @@
         return;
       }
 
-      state.household.pause = { from, until };
+      const cel = String(data.get("pauseTarget") || "dom");
+      if (cel === "dom") {
+        state.household.pause = { from, until };
+      } else {
+        const osoba = getUserById(cel);
+        if (!osoba) {
+          toast("Nie znaleziono domownika", "Odśwież aplikację i spróbuj ponownie.");
+          return;
+        }
+        osoba.absence = { from, until };
+      }
+
+      const nazwaCelu = cel === "dom" ? "Cały dom" : getUser(cel).name;
       activeModal = null;
       saveState();
-      toast("Wstrzymano zadania", `${formatHumanDate(from)} – ${formatHumanDate(until)}`);
+      toast(`Wstrzymano: ${nazwaCelu}`, `${formatHumanDate(from)} – ${formatHumanDate(until)}`);
       render();
       return;
     }
@@ -4308,16 +4446,23 @@
       return;
     }
 
-    const settledOverdueDays = getOverdueDays(task);
-    if (settledOverdueDays > 0) {
-      const penaltyPer = (settledOverdueDays * 10) / previousIds.length;
+    // Zastępstwo: zabranie zadania osobie, której nie ma w domu. Wtedy nie ma
+    // ani kary za zwłokę, ani transferu +10/-10 — to nie jest zrzucanie
+    // obowiązku, tylko pokrycie kogoś, kto legalnie jest nieobecny.
+    const zastepstwo = previousIds.some((id) => isUserAbsentNow(id));
+
+    if (!zastepstwo) {
       previousIds.forEach((prevId) => {
+        const dniZwloki = getOverdueDays(task, null, prevId);
+        if (dniZwloki <= 0) {
+          return;
+        }
         addPointEvent({
           userId: prevId,
           taskId: task.id,
-          delta: -penaltyPer,
+          delta: -(dniZwloki * 10) / previousIds.length,
           type: "overdue",
-          text: `Kara za ${settledOverdueDays} dni zwłoki przed przepisaniem zadania`
+          text: `Kara za ${dniZwloki} dni zwłoki przed przepisaniem zadania`
         });
       });
     }
@@ -4330,7 +4475,13 @@
 
     const wasMine = previousIds.includes(state.currentUserId);
     const isMine = nextIds.includes(state.currentUserId);
-    if (isMine && !wasMine) {
+    if (zastepstwo) {
+      const nieobecni = previousIds
+        .filter((id) => isUserAbsentNow(id))
+        .map((id) => getUser(id).name)
+        .join(", ");
+      task.history.push(historyEntry(`Zastępstwo za: ${nieobecni} (bez transferu punktów)`, state.currentUserId));
+    } else if (isMine && !wasMine) {
       addPointEvent({
         userId: state.currentUserId,
         taskId: task.id,
@@ -4352,7 +4503,10 @@
 
     selectedTaskId = task.id;
     saveState();
-    toast("Przypisanie zmienione", `${task.title} → ${nextNames}`);
+    toast(
+      zastepstwo ? "Zastępstwo przyjęte" : "Przypisanie zmienione",
+      zastepstwo ? `${task.title} — bez transferu punktów` : `${task.title} → ${nextNames}`
+    );
     render();
   }
 
@@ -4415,7 +4569,7 @@
   function createNextRecurringTask(task) {
     const dueDate = getCaughtUpDueDate(getNextValidDueDate(task.dueDate, task.recurrence), task.recurrence);
     const assigneeIds = task.recurrence.rotate
-      ? Array.from(new Set(getAssigneeIds(task).map((id) => getNextUserId(id))))
+      ? Array.from(new Set(getAssigneeIds(task).map((id) => getNextAvailableUserId(id, dueDate))))
       : getAssigneeIds(task).slice();
     const shoppingItems = isShoppingTask(task)
       ? task.shoppingItems.map((item) => ({
@@ -4584,7 +4738,7 @@
   }
 
   function getDueReminderTasks() {
-    if (isHouseholdPausedNow()) {
+    if (isUserAbsentNow(state.currentUserId)) {
       return [];
     }
 
@@ -4915,7 +5069,7 @@
       if (!penaltyIds.includes(userId)) {
         return sum;
       }
-      return sum - (getOverdueDays(task, lastDays || "month") * 10) / penaltyIds.length;
+      return sum - (getOverdueDays(task, lastDays || "month", userId) * 10) / penaltyIds.length;
     }, 0);
 
     return completedPoints + transferPoints + overduePenalty;
@@ -5024,7 +5178,7 @@
     return completedPoints + transferPoints;
   }
 
-  function getOverdueDays(task, lastDays = null) {
+  function getOverdueDays(task, lastDays = null, userId = null) {
     if (isSkipped(task) || task.isRewardTask) {
       return 0;
     }
@@ -5056,8 +5210,12 @@
     }
 
     const totalDays = daysBetween(startDate, endDate) + 1;
-    const pausedDays = countPausedDaysInRange(startDate, endDate);
-    return Math.max(0, totalDays - pausedDays);
+    // Bez wskazanej osoby odliczamy tylko pauzę domu; ze wskazaną — również jej
+    // własną nieobecność, żeby wyjazd nie generował kar za zwłokę.
+    const excusedDays = userId
+      ? countExcusedDaysInRange(userId, startDate, endDate)
+      : countPausedDaysInRange(startDate, endDate);
+    return Math.max(0, totalDays - excusedDays);
   }
 
   function getPointPeriodStart(date = new Date()) {
