@@ -80,7 +80,6 @@
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
   let shoppingModalTaskId = null;
-  let zapamietanyScroll = 0;
   let editingTaskId = null;
   let taskModalKind = "standard";
   let requestTaskId = null;
@@ -1175,23 +1174,13 @@
     animateCounters();
   }
 
-  // Bez tego strona pod otwartym oknem przewijała się razem z palcem —
-  // wyglądało to, jakby zamiast okna przesuwała się karta pod spodem.
-  // Samo overflow: hidden nie wystarcza na iOS, stąd position: fixed.
+  // Strona pod otwartym oknem nie może jechać razem z palcem. Blokadę robi
+  // sam CSS (overflow na body + overscroll-behavior na oknie i jego tle).
+  // Wcześniej było tu position: fixed, ale to gubi pozycję przewijania i
+  // gryzie się z klawiaturą iOS — po dotknięciu pola okno przestawało się
+  // przewijać.
   function ustawBlokadePrzewijania(zablokuj) {
-    const juzZablokowane = document.body.classList.contains("is-modal-open");
-    if (zablokuj === juzZablokowane) {
-      return;
-    }
-    if (zablokuj) {
-      zapamietanyScroll = window.scrollY;
-      document.body.style.top = `-${zapamietanyScroll}px`;
-      document.body.classList.add("is-modal-open");
-      return;
-    }
-    document.body.classList.remove("is-modal-open");
-    document.body.style.top = "";
-    window.scrollTo(0, zapamietanyScroll);
+    document.body.classList.toggle("is-modal-open", zablokuj);
   }
 
   function prefersReducedMotion() {

@@ -3272,12 +3272,12 @@ body::before {
 .reward-axis-fill {
   background: linear-gradient(
     90deg,
-    rgba(91, 33, 182, 0) 0%,
-    rgba(91, 33, 182, 0.45) 10%,
-    rgba(124, 58, 237, 0.88) 36%,
-    #a855f7 58%,
-    #ff5ea8 82%,
-    #ff8fc4 94%,
+    #4c1d95 0%,
+    #5b21b6 12%,
+    #7c3aed 34%,
+    #a855f7 56%,
+    #ff5ea8 80%,
+    #ff8fc4 93%,
     #ffc4e2 100%
   );
 }
@@ -3625,10 +3625,6 @@ body::before {
 /* Samo overflow: hidden nie zatrzymuje iOS — dopiero position: fixed.
    Pozycję przywraca ustawBlokadePrzewijania() w app.js. */
 body.is-modal-open {
-  position: fixed;
-  left: 0;
-  right: 0;
-  width: 100%;
   overflow: hidden;
 }
 
@@ -3668,4 +3664,38 @@ body.is-modal-open {
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.5);
   font-size: var(--fs-body);
+}
+
+
+/* ===================== Przewijanie okien na telefonie ===================== */
+/* Wcześniej przewijały się DWA zagnieżdżone kontenery naraz: tło okna i samo
+   okno. Na iOS kończyło się to zablokowanym przewijaniem, a arkusz potrafił
+   zjechać poniżej ekranu razem z przyciskami. Teraz przewija się wyłącznie
+   okno, a tło stoi. */
+@media (max-width: 720px) {
+  .modal-backdrop {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+
+  .modal {
+    /* dvh, nie vh: kurczy się, gdy wyjedzie klawiatura — vh jej nie widzi
+       i dlatego przyciski lądowały pod spodem. */
+    max-height: 92dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 12px;
+  }
+
+  /* Zapas na wskaźnik ekranu głównego i zaokrąglone rogi MUSI siedzieć na
+     samych przyciskach: dolny padding kontenera przewijania nie wchodzi do
+     obszaru przewijania, więc po zjechaniu na koniec treść dobijała do
+     krawędzi ekranu i rogi przycisków były ucinane. */
+  .modal .form-actions {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
 }
