@@ -1927,7 +1927,7 @@ button.metric {
 
   .main {
     width: 100%;
-    padding: 16px 16px calc(98px + env(safe-area-inset-bottom));
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(98px + env(safe-area-inset-bottom));
   }
 
   .sidebar {
@@ -2072,7 +2072,7 @@ button.metric {
 
 @media (max-width: 720px) {
   .main {
-    padding: 12px 12px calc(94px + env(safe-area-inset-bottom));
+    padding: calc(12px + env(safe-area-inset-top)) 12px calc(94px + env(safe-area-inset-bottom));
   }
 
   .sidebar {
@@ -2300,7 +2300,7 @@ button.metric {
     min-height: 0;
     overflow-x: hidden;
     border-radius: 0;
-    padding: 16px 16px calc(28px + env(safe-area-inset-bottom));
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
   }
 
   .task-form {
@@ -3267,20 +3267,65 @@ body::before {
   overflow: hidden;
 }
 
-/* Przesuwający się połysk — wspólny dla wszystkich poziomów */
+/* Ślad lecącej materii: zimny ogon, rozgrzane czoło. Czoło jest płaskie —
+   nic nie wystaje poza obrys, bo pasek przycina zawartość (overflow: hidden). */
+.reward-axis-fill {
+  background: linear-gradient(
+    90deg,
+    rgba(91, 33, 182, 0) 0%,
+    rgba(91, 33, 182, 0.45) 10%,
+    rgba(124, 58, 237, 0.88) 36%,
+    #a855f7 58%,
+    #ff5ea8 82%,
+    #ff8fc4 94%,
+    #ffc4e2 100%
+  );
+}
+
+/* Dwie warstwy jęzorów ognia. Przesuw MUSI być w pikselach i być
+   wielokrotnością każdego kafla w warstwie — inaczej pętla ma widoczny szew
+   (procenty w tle odnoszą się do różnicy rozmiarów, nie do szerokości kafla).
+   312 = 2x156 = 3x104 = 4x78; 440 = 4x110 = 5x88. */
+.reward-axis-fill::before,
 .reward-axis-fill::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(
-    100deg,
-    transparent 20%,
-    rgba(255, 255, 255, 0.55) 48%,
-    rgba(255, 255, 255, 0.85) 52%,
-    transparent 80%
+  mix-blend-mode: screen;
+  pointer-events: none;
+  background-repeat: repeat-x;
+  /* Maska stoi w miejscu — żar gęstnieje ku czołu i gaśnie w ogonie. */
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.22) 34%,
+    rgba(0, 0, 0, 0.68) 68%,
+    #000 100%
   );
-  transform: translateX(-120%);
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.22) 34%,
+    rgba(0, 0, 0, 0.68) 68%,
+    #000 100%
+  );
+}
+
+.reward-axis-fill::before {
+  background-image:
+    radial-gradient(closest-side at 22% 34%, rgba(255, 186, 132, 0.58), transparent 72%),
+    radial-gradient(closest-side at 62% 70%, rgba(255, 116, 182, 0.6), transparent 72%),
+    radial-gradient(closest-side at 88% 42%, rgba(255, 232, 246, 0.62), transparent 70%);
+  background-size: 156px 100%, 104px 100%, 78px 100%;
+}
+
+.reward-axis-fill::after {
+  background-image:
+    radial-gradient(closest-side at 36% 66%, rgba(255, 90, 150, 0.5), transparent 74%),
+    radial-gradient(closest-side at 78% 30%, rgba(255, 205, 150, 0.46), transparent 70%);
+  background-size: 110px 100%, 88px 100%;
+  opacity: 0.72;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -3302,18 +3347,33 @@ body::before {
     animation: puls-laser 1.5s ease-in-out infinite;
   }
 
-  .reward-axis-fill::after {
-    animation: polysk 3.6s var(--ease) infinite;
+  .reward-axis-fill::before {
+    animation: zar-przod 4.2s linear infinite;
   }
 
-  .reward-axis-fill.glow-1::after { animation-duration: 3s; }
-  .reward-axis-fill.glow-2::after { animation-duration: 2.4s; }
-  .reward-axis-fill.glow-3::after,
-  .reward-axis-fill.is-max::after { animation-duration: 1.4s; }
+  .reward-axis-fill::after {
+    animation: zar-tyl 11.6s linear infinite;
+  }
 
-  @keyframes polysk {
-    0%        { transform: translateX(-120%); }
-    55%, 100% { transform: translateX(220%); }
+  /* Im wyższy próg, tym żywiej pali się materia */
+  .reward-axis-fill.glow-1::before { animation-duration: 3.6s; }
+  .reward-axis-fill.glow-2::before { animation-duration: 3s; }
+  .reward-axis-fill.glow-3::before,
+  .reward-axis-fill.is-max::before { animation-duration: 2.2s; }
+
+  .reward-axis-fill.glow-1::after { animation-duration: 10s; }
+  .reward-axis-fill.glow-2::after { animation-duration: 8.4s; }
+  .reward-axis-fill.glow-3::after,
+  .reward-axis-fill.is-max::after { animation-duration: 6.2s; }
+
+  @keyframes zar-przod {
+    from { background-position: 0 0, 0 0, 0 0; }
+    to   { background-position: -312px 0, -312px 0, -312px 0; }
+  }
+
+  @keyframes zar-tyl {
+    from { background-position: 0 0, 0 0; }
+    to   { background-position: -440px 0, -440px 0; }
   }
 
   @keyframes puls-0 {
@@ -3356,6 +3416,7 @@ body::before {
   .reward-axis-fill.glow-2 { box-shadow: 0 0 18px rgba(109, 40, 217, 0.7); }
   .reward-axis-fill.glow-3,
   .reward-axis-fill.is-max { box-shadow: 0 0 26px rgba(109, 40, 217, 0.9), 0 0 44px rgba(219, 39, 119, 0.7); }
+  .reward-axis-fill::before,
   .reward-axis-fill::after { display: none; }
 }
 
@@ -3541,4 +3602,70 @@ body::before {
   font-size: var(--fs-meta);
   font-weight: 700;
   line-height: 1.35;
+}
+
+
+/* ===================== Zadanie porzucone przez nieobecnego ===================== */
+.absence-warning {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.32);
+  border-radius: var(--radius-sm);
+  background: rgba(254, 243, 219, 0.82);
+  color: #7c4a03;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+}
+
+.absence-warning strong {
+  color: #92400e;
+}
+
+/* ===================== Blokada tła pod otwartym oknem ===================== */
+/* Samo overflow: hidden nie zatrzymuje iOS — dopiero position: fixed.
+   Pozycję przywraca ustawBlokadePrzewijania() w app.js. */
+body.is-modal-open {
+  position: fixed;
+  left: 0;
+  right: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* ===================== Dopisywanie produktu do listy zakupów ===================== */
+.modal-slim {
+  max-width: 420px;
+}
+
+.shopping-head-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shopping-add-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.shopping-add-list {
+  display: grid;
+  gap: 6px;
+  max-height: 40vh;
+  margin-top: 12px;
+  overflow-y: auto;
+}
+
+.shopping-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.5);
+  font-size: var(--fs-body);
 }

@@ -35,6 +35,8 @@
   ];
   const MONTHLY_GOAL = 500;
   const CARRYOVER_DIVISOR = 4;
+  const HISTORY_FEED_LIMIT = 60;
+  const RECENT_DONE_LIMIT = 8;
 
   const PRIORITY = {
     urgent: { label: "Bardzo wysoki", points: 25, className: "urgent" },
@@ -77,6 +79,8 @@
   let selectedDate = toISO(new Date());
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
+  let shoppingModalTaskId = null;
+  let zapamietanyScroll = 0;
   let editingTaskId = null;
   let taskModalKind = "standard";
   let requestTaskId = null;
@@ -1162,11 +1166,32 @@
       ${activeModal === "vote" ? renderVoteModal() : ""}
       ${activeModal === "login" ? renderLoginModal() : ""}
       ${activeModal === "pause" ? renderPauseModal() : ""}
+      ${activeModal === "shopping-item" ? renderShoppingItemModal() : ""}
       ${notificationPanelOpen ? renderNotificationPanel() : ""}
     `;
 
+    ustawBlokadePrzewijania(Boolean(activeModal) || notificationPanelOpen);
     growProgressBars();
     animateCounters();
+  }
+
+  // Bez tego strona pod otwartym oknem przewijała się razem z palcem —
+  // wyglądało to, jakby zamiast okna przesuwała się karta pod spodem.
+  // Samo overflow: hidden nie wystarcza na iOS, stąd position: fixed.
+  function ustawBlokadePrzewijania(zablokuj) {
+    const juzZablokowane = document.body.classList.contains("is-modal-open");
+    if (zablokuj === juzZablokowane) {
+      return;
+    }
+    if (zablokuj) {
+      zapamietanyScroll = window.scrollY;
+      document.body.style.top = `-${zapamietanyScroll}px`;
+      document.body.classList.add("is-modal-open");
+      return;
+    }
+    document.body.classList.remove("is-modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, zapamietanyScroll);
   }
 
   function prefersReducedMotion() {
@@ -1932,7 +1957,9 @@
 
   function renderDashboardView() {
     const mineToday = state.tasks.filter((task) => isAssignee(task, state.currentUserId) && isToday(task) && isOpen(task));
-    const mineOverdue = state.tasks.filter((task) => isAssignee(task, state.currentUserId) && isOverdue(task));
+    const mineOverdue = state.tasks.filter(
+      (task) => isAssignee(task, state.currentUserId) && isOverdue(task) && !isAbandonedByAbsence(task)
+    );
     const homeOverdue = state.tasks.filter((task) => isOverdue(task));
     const homeToday = state.tasks.filter((task) => isToday(task) && isOpen(task));
     const weeklyPoints = getUserPoints(state.currentUserId, 7);
@@ -2478,7 +2505,7 @@
               <h2>Ostatnie ukończenia</h2>
             </div>
             ${renderTaskList(
-              sortTasks(state.tasks.filter((task) => task.status === "done")).slice(0, 5),
+              sortByCompletedDesc(state.tasks.filter((task) => task.status === "done")).slice(0, RECENT_DONE_LIMIT),
               "Jeszcze bez punktów",
               "Ukończ pierwsze zadanie."
             )}
@@ -2597,6 +2624,20 @@
     `;
   }
 
+  function renderAbsenceWarning(task) {
+    if (!isAbandonedByAbsence(task) || !isOverdue(task)) {
+      return "";
+    }
+    const nieobecni = getAssignees(task).map((user) => user.name).join(", ");
+    const odmiana = getAssigneeIds(task).length > 1 ? "są nieobecni" : "jest nieobecny";
+    return `
+      <p class="absence-warning">
+        <strong>${escapeHtml(nieobecni)} ${odmiana}.</strong>
+        Jeśli nikt nie przejmie tego zadania, karę za zwłokę poniesie cały dom.
+      </p>
+    `;
+  }
+
   function renderTaskCard(task) {
     const assignees = getAssignees(task);
     const shopping = isShoppingTask(task);
@@ -2642,6 +2683,7 @@
             ${shopping ? `<span>•</span><span>${renderShoppingShortSummary(task)}</span>` : ""}
           </div>
           <div class="task-meta" style="margin-top: 7px">${meta}</div>
+          ${renderAbsenceWarning(task)}
         </div>
         <div class="task-actions">
           ${
@@ -2810,7 +2852,14 @@
       <div class="shopping-panel ${variant === "top" ? "shopping-panel-top" : ""}">
         <div class="section-head">
           <h3>Lista zakupów</h3>
-          <span class="pill blue">${summary.resolved}/${summary.total}</span>
+          <div class="shopping-head-side">
+            <span class="pill blue">${summary.resolved}/${summary.total}</span>
+            ${
+              task.status === "done"
+                ? ""
+                : `<button class="ghost-button" type="button" data-action="open-shopping-item-modal" data-task-id="${task.id}">+ Produkt</button>`
+            }
+          </div>
         </div>
         <div class="shopping-list">
           ${task.shoppingItems
@@ -3440,6 +3489,30 @@
       return;
     }
 
+    if (action === "open-shopping-item-modal") {
+      shoppingModalTaskId = actionElement.dataset.taskId || null;
+      activeModal = "shopping-item";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      queueMicrotask(() => document.querySelector("[name='produkt']")?.focus());
+      return;
+    }
+
+    if (action === "close-shopping-item-modal") {
+      if (event.target === actionElement || actionElement.matches("button")) {
+        activeModal = null;
+        shoppingModalTaskId = null;
+        render();
+      }
+      return;
+    }
+
+    if (action === "remove-shopping-item") {
+      removeShoppingItem(actionElement.dataset.taskId, actionElement.dataset.itemId);
+      return;
+    }
+
     if (action === "open-shopping-modal") {
       editingTaskId = null;
       taskModalKind = "shopping";
@@ -3731,6 +3804,12 @@
 
     event.preventDefault();
     const formType = form.dataset.form;
+
+    if (formType === "shopping-item") {
+      const data = new FormData(form);
+      addShoppingItem(form.dataset.taskId, String(data.get("produkt") || ""));
+      return;
+    }
 
     if (formType === "login") {
       const data = new FormData(form);
@@ -4859,6 +4938,19 @@
     return sortTasks(tasks);
   }
 
+  // sortTasks porządkuje po terminie, co przy liście ukończonych wypychało
+  // na górę najstarsze zadania. Tutaj liczy się moment ukończenia.
+  function sortByCompletedDesc(tasks) {
+    return tasks.slice().sort((a, b) => {
+      const czasA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+      const czasB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+      if (czasA !== czasB) {
+        return czasB - czasA;
+      }
+      return b.dueDate.localeCompare(a.dueDate);
+    });
+  }
+
   function sortTasks(tasks) {
     return tasks.slice().sort((a, b) => {
       if (a.status !== b.status) {
@@ -4895,7 +4987,9 @@
           taskId: task.id
         }))
       )
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      // Od najnowszych — aktywność czyta się od tego, co przed chwilą się wydarzyło.
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, HISTORY_FEED_LIMIT);
   }
 
   function isShoppingTask(task) {
@@ -5014,6 +5108,119 @@
     return Number.isInteger(value) ? String(value) : value.toLocaleString("pl-PL", { maximumFractionDigits: 1 });
   }
 
+  function renderShoppingItemModal() {
+    const task = getTask(shoppingModalTaskId);
+    if (!task || !isShoppingTask(task)) {
+      return "";
+    }
+
+    const items = normalizeShoppingItems(task.shoppingItems);
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-shopping-item-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="shopping-item-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="shopping-item-title">Dodaj produkt</h2>
+            <button class="icon-button" type="button" data-action="close-shopping-item-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="shopping-add-form" data-form="shopping-item" data-task-id="${task.id}">
+            <input
+              class="input"
+              name="produkt"
+              placeholder="Np. mleko"
+              autocomplete="off"
+              enterkeyhint="done"
+              maxlength="60"
+              required
+            />
+            <button class="button" type="submit">Dodaj</button>
+          </form>
+          <p class="form-hint">Produkt dopisze się na koniec listy. Możesz dodać kilka po kolei.</p>
+          <div class="shopping-add-list">
+            ${
+              items.length
+                ? items
+                    .map(
+                      (item) => `
+                        <div class="shopping-add-row">
+                          <span>${escapeHtml(item.name)}</span>
+                          <button
+                            class="ghost-button"
+                            type="button"
+                            data-action="remove-shopping-item"
+                            data-task-id="${task.id}"
+                            data-item-id="${item.id}"
+                            aria-label="Usuń ${escapeAttribute(item.name)}"
+                          >Usuń</button>
+                        </div>
+                      `
+                    )
+                    .join("")
+                : `<p class="form-hint">Lista jest jeszcze pusta.</p>`
+            }
+          </div>
+          <div class="form-actions">
+            <button class="button" type="button" data-action="close-shopping-item-modal">Gotowe</button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function addShoppingItem(taskId, rawName) {
+    const task = getTask(taskId);
+    if (!task || !isShoppingTask(task) || task.status === "done") {
+      return;
+    }
+
+    const name = String(rawName || "").trim();
+    if (!name) {
+      return;
+    }
+
+    const items = normalizeShoppingItems(task.shoppingItems);
+    const juzJest = items.some((item) => item.name.toLocaleLowerCase("pl-PL") === name.toLocaleLowerCase("pl-PL"));
+    if (juzJest) {
+      toast("Ten produkt już tam jest", `„${name}" jest na liście.`);
+      render();
+      return;
+    }
+
+    task.shoppingItems = [...items, { id: uid("shop"), name, status: "pending" }];
+    task.points = getTaskPotentialPoints(task);
+    task.history.push(historyEntry(`Dopisano do listy: ${name}`, state.currentUserId));
+
+    saveState();
+    render();
+    queueMicrotask(() => document.querySelector("[name='produkt']")?.focus());
+  }
+
+  function removeShoppingItem(taskId, itemId) {
+    const task = getTask(taskId);
+    if (!task || !isShoppingTask(task) || task.status === "done") {
+      return;
+    }
+
+    const items = normalizeShoppingItems(task.shoppingItems);
+    const item = items.find((entry) => entry.id === itemId);
+    if (!item) {
+      return;
+    }
+
+    if (items.length === 1) {
+      toast("Lista nie może zostać pusta", "Zakupy bez produktów nie mają czego rozliczyć.");
+      render();
+      return;
+    }
+
+    task.shoppingItems = items.filter((entry) => entry.id !== itemId);
+    task.points = getTaskPotentialPoints(task);
+    task.history.push(historyEntry(`Usunięto z listy: ${item.name}`, state.currentUserId));
+
+    saveState();
+    render();
+  }
+
   function updateShoppingItemStatus(taskId, itemId, status) {
     const task = getTask(taskId);
     if (!task || !isShoppingTask(task) || task.status === "done") {
@@ -5083,12 +5290,34 @@
     return base;
   }
 
+  // Zadanie porzucone przez nieobecnych staje się długiem całego domu: nieobecny
+  // nie płaci nic, płacą ci, którzy byli na miejscu i mogli je przejąć. Bez tego
+  // wyjazd zamieniał się w rosnący minus dla osoby, która i tak nie mogła nic zrobić.
+  function isAbandonedByAbsence(task) {
+    if (task.status !== "open" || isSkipped(task) || task.isRewardTask) {
+      return false;
+    }
+    const assignees = getAssigneeIds(task);
+    if (!assignees.length || !assignees.every((id) => isUserAbsentNow(id))) {
+      return false;
+    }
+    // Pauza całego domu to nie porzucenie — wtedy nikt nie płaci.
+    return getPresentUserIds().length > 0;
+  }
+
+  function getPresentUserIds() {
+    return state.users.filter((user) => !isUserAbsentNow(user.id)).map((user) => user.id);
+  }
+
   function getPenaltyUserIds(task) {
     if (isSkipped(task)) {
       return [];
     }
     if (task.status === "done") {
       return getAssigneeIds(task);
+    }
+    if (isAbandonedByAbsence(task)) {
+      return getPresentUserIds();
     }
     return getAssigneeIds(task);
   }
