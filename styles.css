@@ -3707,86 +3707,213 @@ body.is-modal-open {
   --gold-deep: #96690f;
 }
 
-/* Prezent wisi nad znacznikiem, więc oś potrzebuje zapasu od góry —
-   bez tego ikona wchodziłaby na tekst nad paskiem. */
+/* Prezent wisi nad znacznikiem, więc oś potrzebuje zapasu od góry.
+   Sam znacznik z liczbą zostaje w swoim rozmiarze — prezent jest dodatkiem
+   i musi być od niego wyraźnie mniejszy. */
 .reward-axis {
-  margin-top: 30px;
+  margin-top: 26px;
 }
 
 .reward-axis.compact {
-  margin-top: 28px;
+  margin-top: 24px;
 }
 
 .reward-gift {
   position: absolute;
-  bottom: calc(100% + 5px);
+  bottom: calc(100% + 4px);
   left: 50%;
   display: grid;
-  width: 21px;
-  height: 21px;
+  width: 15px;
+  height: 15px;
   transform: translateX(-50%);
+  overflow: hidden;
   place-items: center;
-  border: 1.5px solid var(--gold);
+  border: 1px solid var(--gold);
   border-radius: 50%;
-  background: linear-gradient(160deg, #fffaf0, #ffeec8);
+  background: linear-gradient(160deg, #fffaf0, #ffe9b8);
   color: var(--gold-deep);
-  box-shadow: 0 1px 4px rgba(120, 85, 10, 0.26);
+  box-shadow: 0 1px 3px rgba(120, 85, 10, 0.3);
 }
 
 .reward-gift svg {
-  width: 12px;
-  height: 12px;
-}
-
-/* Przyznana nagroda: krążek nabiera złota i dostaje ptaszka */
-.reward-gift.is-granted {
-  border-color: var(--gold-deep);
-  background: linear-gradient(160deg, var(--gold-light), var(--gold));
-  color: #6b4a09;
-  box-shadow:
-    0 0 9px rgba(224, 169, 32, 0.7),
-    0 1px 4px rgba(120, 85, 10, 0.3);
-}
-
-.reward-gift-check {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  display: grid;
-  width: 13px;
-  height: 13px;
-  place-items: center;
-  border: 1.5px solid #fffdf6;
-  border-radius: 50%;
-  background: #fffdf6;
-  color: var(--gold-deep);
-  box-shadow: 0 1px 3px rgba(120, 85, 10, 0.35);
-}
-
-.reward-gift-check svg {
   width: 9px;
   height: 9px;
 }
 
+/* Przyznana nagroda: prezent szarzeje, ptaszek zostaje złoty i leży
+   bezpośrednio na nim — bez własnego tła. */
+.reward-gift.is-granted {
+  border-color: #b9b1a6;
+  background: linear-gradient(160deg, #f4f1ec, #ddd6cc);
+  color: #a8a096;
+}
+
+.reward-gift-check {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--gold);
+  filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.9));
+}
+
+.reward-gift-check svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Połysk — prezent błyszczy niezależnie od tego, czy nagroda jest przyznana */
+.reward-gift::after {
+  content: "";
+  position: absolute;
+  top: -60%;
+  left: -120%;
+  width: 60%;
+  height: 220%;
+  transform: rotate(18deg);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.95),
+    transparent
+  );
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .reward-gift::after {
+    animation: prezent-blysk 3.2s ease-in-out infinite;
+  }
+
+  @keyframes prezent-blysk {
+    0%, 62%  { left: -120%; }
+    82%, 100% { left: 160%; }
+  }
+}
+
 .reward-axis.compact .reward-gift {
-  width: 18px;
-  height: 18px;
-  bottom: calc(100% + 4px);
+  width: 13px;
+  height: 13px;
+  bottom: calc(100% + 3px);
 }
 
 .reward-axis.compact .reward-gift svg {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
-.reward-axis.compact .reward-gift-check {
-  right: -3px;
-  bottom: -3px;
+.reward-axis.compact .reward-gift-check svg {
   width: 11px;
   height: 11px;
 }
 
-.reward-axis.compact .reward-gift-check svg {
-  width: 8px;
-  height: 8px;
+/* ===================== Ekran: próg osiągnięty ===================== */
+.confetti-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  pointer-events: none;
+}
+
+.reward-celebration {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(46, 36, 64, 0.55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.reward-celebration-card {
+  display: grid;
+  width: min(420px, 100%);
+  justify-items: center;
+  padding: 30px 24px calc(26px + env(safe-area-inset-bottom));
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(165deg, #fffdf8, #fdf1e4);
+  box-shadow: 0 26px 70px rgba(46, 36, 64, 0.4);
+  text-align: center;
+}
+
+.reward-celebration-badge {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 16px;
+  place-items: center;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  background: linear-gradient(160deg, #fffaf0, #ffe3a6);
+  color: var(--gold-deep);
+  box-shadow:
+    0 0 0 7px rgba(224, 169, 32, 0.16),
+    0 8px 22px rgba(150, 105, 15, 0.28);
+}
+
+.reward-celebration-badge svg {
+  width: 40px;
+  height: 40px;
+}
+
+.reward-celebration-eyebrow {
+  margin: 0 0 4px;
+  color: var(--gold-deep);
+  font-size: var(--fs-small);
+  font-weight: 850;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.reward-celebration-title {
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.reward-celebration-text {
+  margin: 0 0 22px;
+  color: var(--muted);
+  font-size: var(--fs-body);
+}
+
+.reward-celebration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .reward-celebration {
+    animation: gratulacje-tlo 260ms var(--ease) both;
+  }
+
+  .reward-celebration-card {
+    animation: gratulacje-karta 460ms var(--spring) both;
+  }
+
+  .reward-celebration-badge {
+    animation: gratulacje-odznaka 2.6s ease-in-out 460ms infinite;
+  }
+
+  @keyframes gratulacje-tlo {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  @keyframes gratulacje-karta {
+    from { opacity: 0; transform: translateY(26px) scale(0.94); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes gratulacje-odznaka {
+    0%, 100% { transform: scale(1) rotate(0deg); }
+    35%      { transform: scale(1.07) rotate(-5deg); }
+    65%      { transform: scale(1.07) rotate(5deg); }
+  }
 }

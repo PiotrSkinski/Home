@@ -82,6 +82,7 @@
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
   let shoppingModalTaskId = null;
+  let rewardCelebration = null;
   let editingTaskId = null;
   let taskModalKind = "standard";
   let requestTaskId = null;
@@ -1168,6 +1169,7 @@
       ${activeModal === "login" ? renderLoginModal() : ""}
       ${activeModal === "pause" ? renderPauseModal() : ""}
       ${activeModal === "shopping-item" ? renderShoppingItemModal() : ""}
+      ${rewardCelebration ? renderRewardCelebration() : ""}
       ${notificationPanelOpen ? renderNotificationPanel() : ""}
     `;
 
@@ -1187,6 +1189,115 @@
 
   function prefersReducedMotion() {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  /* ===================== Konfetti nagrody =====================
+     Osobny canvas poza #app (render() przebudowuje #app przy każdej zmianie
+     stanu). Konfetti sypie się od góry ekranu w dół i samo wygasa. */
+  let confettiCanvas = null;
+  let confettiCtx = null;
+  let confettiPieces = [];
+  let confettiRunning = false;
+  let confettiSypieDo = 0;
+
+  const CONFETTI_COLORS = ["#e0a920", "#f7d774", "#a855f7", "#ff5ea8", "#6d28d9", "#ffd7b0", "#ffffff"];
+
+  function ensureConfettiCanvas() {
+    if (confettiCanvas) {
+      return confettiCanvas;
+    }
+    confettiCanvas = document.createElement("canvas");
+    confettiCanvas.className = "confetti-canvas";
+    confettiCanvas.setAttribute("aria-hidden", "true");
+    document.body.appendChild(confettiCanvas);
+    confettiCtx = confettiCanvas.getContext("2d");
+    resizeConfettiCanvas();
+    window.addEventListener("resize", resizeConfettiCanvas);
+    return confettiCanvas;
+  }
+
+  function resizeConfettiCanvas() {
+    if (!confettiCanvas) {
+      return;
+    }
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    confettiCanvas.width = window.innerWidth * ratio;
+    confettiCanvas.height = window.innerHeight * ratio;
+    confettiCanvas.style.width = `${window.innerWidth}px`;
+    confettiCanvas.style.height = `${window.innerHeight}px`;
+    confettiCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+
+  function sypnijKonfetti(ile) {
+    for (let i = 0; i < ile; i += 1) {
+      confettiPieces.push({
+        x: Math.random() * window.innerWidth,
+        y: -20 - Math.random() * 80,
+        vy: 1.6 + Math.random() * 3.2,
+        vx: -0.6 + Math.random() * 1.2,
+        size: 5 + Math.random() * 7,
+        rot: Math.random() * Math.PI * 2,
+        vr: -0.12 + Math.random() * 0.24,
+        kolysanie: Math.random() * Math.PI * 2,
+        tempo: 0.02 + Math.random() * 0.04,
+        kolo: Math.random() < 0.28,
+        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)]
+      });
+    }
+  }
+
+  function startKonfetti(czasMs) {
+    if (prefersReducedMotion()) {
+      return;
+    }
+    ensureConfettiCanvas();
+    confettiSypieDo = performance.now() + czasMs;
+    if (confettiRunning) {
+      return;
+    }
+    confettiRunning = true;
+
+    const step = () => {
+      const teraz = performance.now();
+      confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+
+      if (teraz < confettiSypieDo) {
+        sypnijKonfetti(2);
+      }
+
+      confettiPieces = confettiPieces.filter((p) => p.y < window.innerHeight + 40);
+      confettiPieces.forEach((p) => {
+        p.kolysanie += p.tempo;
+        p.x += p.vx + Math.sin(p.kolysanie) * 0.9;
+        p.y += p.vy;
+        p.rot += p.vr;
+
+        confettiCtx.save();
+        confettiCtx.translate(p.x, p.y);
+        confettiCtx.rotate(p.rot);
+        confettiCtx.fillStyle = p.color;
+        if (p.kolo) {
+          confettiCtx.beginPath();
+          confettiCtx.arc(0, 0, p.size * 0.42, 0, Math.PI * 2);
+          confettiCtx.fill();
+        } else {
+          confettiCtx.fillRect(-p.size / 2, -p.size * 0.3, p.size, p.size * 0.6);
+        }
+        confettiCtx.restore();
+      });
+
+      if (confettiPieces.length || teraz < confettiSypieDo) {
+        requestAnimationFrame(step);
+      } else {
+        confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+        confettiRunning = false;
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
+  function stopKonfetti() {
+    confettiSypieDo = 0;
   }
 
   /* ===================== Miotła =====================
@@ -2424,7 +2535,9 @@
                 ? `<div class="notification-list">${notifications
                     .map(
                       (item) => `
-                        <button class="notification-item" type="button" data-action="select-task" data-task-id="${item.taskId}">
+                        <button class="notification-item" type="button" data-action="${
+                      item.kind === "reward" ? "open-reward-celebration" : "select-task"
+                    }" data-task-id="${item.taskId}" data-notification-id="${item.id}">
                           <span class="avatar small" style="background:${item.read ? "#a99a8f" : "#b85f45"}">!</span>
                           <span class="item-body">
                             <span class="item-title">${escapeHtml(item.title)} · ${formatShortDateTime(item.createdAt)}</span>
@@ -3250,6 +3363,34 @@
     `;
   }
 
+  function renderRewardCelebration() {
+    const { userName, threshold } = rewardCelebration;
+    return `
+      <div class="reward-celebration" role="dialog" aria-modal="true" aria-labelledby="reward-celebration-title">
+        <div class="reward-celebration-card">
+          <span class="reward-celebration-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="10" width="17" height="10.5" rx="1.4" />
+              <path d="M3.5 14h17" />
+              <path d="M12 10v10.5" />
+              <path d="M12 10C10.2 10 7.4 9.6 7.4 7.6S9.2 5.2 10.1 5.7 12 8.2 12 10z" />
+              <path d="M12 10c1.8 0 4.6-.4 4.6-2.4S14.8 5.2 13.9 5.7 12 8.2 12 10z" />
+            </svg>
+          </span>
+          <p class="reward-celebration-eyebrow">Próg osiągnięty</p>
+          <h2 class="reward-celebration-title" id="reward-celebration-title">
+            ${escapeHtml(userName)} ma ${threshold} pkt!
+          </h2>
+          <p class="reward-celebration-text">Teraz Ty przyznajesz nagrodę.</p>
+          <div class="reward-celebration-actions">
+            <button class="button" type="button" data-action="open-reward-task">Zobacz zadanie</button>
+            <button class="ghost-button" type="button" data-action="close-reward-celebration">Później</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderNotificationPanel() {
     const notifications = getVisibleNotifications().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
@@ -3264,7 +3405,9 @@
             ? `<div class="notification-list">${notifications
                 .map(
                   (item) => `
-                    <button class="notification-item" type="button" data-action="select-task" data-task-id="${item.taskId}">
+                    <button class="notification-item" type="button" data-action="${
+                      item.kind === "reward" ? "open-reward-celebration" : "select-task"
+                    }" data-task-id="${item.taskId}" data-notification-id="${item.id}">
                       <span class="avatar small" style="background:${item.read ? "#a99a8f" : "#b85f45"}">!</span>
                       <span class="item-body">
                         <span class="item-title">${escapeHtml(item.title)} · ${formatShortDateTime(item.createdAt)}</span>
@@ -3520,6 +3663,43 @@
       moreMenuOpen = false;
       render();
       queueMicrotask(() => document.querySelector("[name='title']")?.focus());
+      return;
+    }
+
+    if (action === "open-reward-celebration") {
+      const powiadomienie = state.notifications.find((item) => item.id === actionElement.dataset.notificationId);
+      rewardCelebration = {
+        userName: powiadomienie?.rewardUserName || "Domownik",
+        threshold: powiadomienie?.rewardThreshold || 0,
+        taskId: actionElement.dataset.taskId || powiadomienie?.taskId || null
+      };
+      if (powiadomienie) {
+        powiadomienie.read = true;
+      }
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      saveState();
+      render();
+      startKonfetti(2800);
+      return;
+    }
+
+    if (action === "close-reward-celebration") {
+      rewardCelebration = null;
+      stopKonfetti();
+      render();
+      return;
+    }
+
+    if (action === "open-reward-task") {
+      const taskId = rewardCelebration?.taskId || null;
+      rewardCelebration = null;
+      stopKonfetti();
+      if (taskId && getTask(taskId)) {
+        selectedTaskId = taskId;
+        activeView = "task-detail";
+      }
+      render();
       return;
     }
 
@@ -5557,8 +5737,11 @@
         state.notifications.unshift({
           id: uid("notification"),
           taskId: task.id,
+          kind: "reward",
+          rewardUserName: user.name,
+          rewardThreshold: threshold.points,
           title: "Nagroda do przyznania",
-          body: `${user.name} zebrał(a) ${threshold.points} pkt i czeka na nagrodę.`,
+          body: `${user.name} ma już ${threshold.points} pkt i czeka na nagrodę.`,
           recipientUserId: rewardAssignee.id,
           read: false,
           createdAt: new Date().toISOString()
