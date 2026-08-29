@@ -2269,9 +2269,9 @@
                 <span class="rank-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <small>${row.week} pkt w 7 dni</small>
-                  ${renderRewardAxis(row.points, "compact", row.user.id)}
                 </span>
                 <span class="rank-points">${formatPoints(row.points)} pkt</span>
+                ${renderRewardAxis(row.points, "compact", row.user.id)}
               </div>
             `
           )
@@ -3529,9 +3529,10 @@
     );
   }
 
-  function renderRewardGift(granted) {
+  function renderRewardGift(granted, reached) {
+    const stan = granted ? " is-granted" : reached ? "" : " is-locked";
     return `
-      <span class="reward-gift${granted ? " is-granted" : ""}" aria-hidden="true">
+      <span class="reward-gift${stan}" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3.5" y="10" width="17" height="10.5" rx="1.4" />
           <path d="M3.5 14h17" />
@@ -3565,13 +3566,18 @@
         <span class="reward-axis-fill glow-${osiagniete}${maks ? " is-max" : ""}" style="width:${fillWidth}%"></span>
         ${REWARD_THRESHOLDS.map((threshold) => {
           const left = Math.min(100, (threshold.points / axisMax) * 100);
-          const reached = points >= threshold.points ? "is-reached" : "";
+          const osiagniety = points >= threshold.points;
+          const reached = osiagniety ? "is-reached" : "";
           const granted = isRewardGranted(userId, threshold.points);
-          const opis = granted ? `${threshold.label}: ${threshold.points} pkt — nagroda przyznana` : `${threshold.label}: ${threshold.points} pkt`;
+          const opis = granted
+            ? `${threshold.label}: ${threshold.points} pkt — nagroda przyznana`
+            : osiagniety
+              ? `${threshold.label}: ${threshold.points} pkt — nagroda do przyznania`
+              : `${threshold.label}: ${threshold.points} pkt — jeszcze nie zdobyta`;
           return `
-            <span class="reward-axis-marker ${reached}" style="left:clamp(20px, ${left}%, calc(100% - 20px))" title="${escapeAttribute(opis)}">
-              ${renderRewardGift(granted)}
+            <span class="reward-axis-marker ${reached}" style="left:clamp(24px, ${left}%, calc(100% - 24px))" title="${escapeAttribute(opis)}">
               <span>${threshold.points}</span>
+              ${variant === "compact" ? "" : renderRewardGift(granted, osiagniety)}
             </span>
           `;
         }).join("")}

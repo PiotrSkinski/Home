@@ -3700,32 +3700,28 @@ body.is-modal-open {
   }
 }
 
-/* ===================== Prezenty nad progami nagród ===================== */
+/* ===================== Prezenty przy progach nagród ===================== */
 :root {
   --gold: #e0a920;
   --gold-light: #f7d774;
   --gold-deep: #96690f;
 }
 
-/* Prezent wisi nad znacznikiem, więc oś potrzebuje zapasu od góry.
-   Sam znacznik z liczbą zostaje w swoim rozmiarze — prezent jest dodatkiem
-   i musi być od niego wyraźnie mniejszy. */
-.reward-axis {
-  margin-top: 26px;
-}
-
-.reward-axis.compact {
-  margin-top: 24px;
+/* Prezent siedzi w okienku progu, po prawej stronie liczby. */
+.reward-axis-marker {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  padding-right: 4px;
 }
 
 .reward-gift {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 50%;
+  position: relative;
   display: grid;
+  flex: 0 0 auto;
   width: 15px;
   height: 15px;
-  transform: translateX(-50%);
   overflow: hidden;
   place-items: center;
   border: 1px solid var(--gold);
@@ -3740,7 +3736,15 @@ body.is-modal-open {
   height: 9px;
 }
 
-/* Przyznana nagroda: prezent szarzeje, ptaszek zostaje złoty i leży
+/* Próg jeszcze nie zdobyty: prezent wygaszony, bez złota. */
+.reward-gift.is-locked {
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.72);
+  box-shadow: none;
+}
+
+/* Nagroda przyznana: prezent szarzeje, ptaszek zostaje złoty i leży
    bezpośrednio na nim — bez własnego tła. */
 .reward-gift.is-granted {
   border-color: #b9b1a6;
@@ -3762,7 +3766,7 @@ body.is-modal-open {
   height: 13px;
 }
 
-/* Połysk — prezent błyszczy niezależnie od tego, czy nagroda jest przyznana */
+/* Połysk — prezent błyszczy niezależnie od stanu */
 .reward-gift::after {
   content: "";
   position: absolute;
@@ -3771,12 +3775,7 @@ body.is-modal-open {
   width: 60%;
   height: 220%;
   transform: rotate(18deg);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.95),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
   pointer-events: none;
 }
 
@@ -3786,25 +3785,26 @@ body.is-modal-open {
   }
 
   @keyframes prezent-blysk {
-    0%, 62%  { left: -120%; }
+    0%, 62%   { left: -120%; }
     82%, 100% { left: 160%; }
   }
 }
 
-.reward-axis.compact .reward-gift {
-  width: 13px;
-  height: 13px;
-  bottom: calc(100% + 3px);
+/* ===================== Mini ranking: pasek pod spodem ===================== */
+/* Punkty idą do górnego wiersza, a pasek dostaje całą szerokość karty —
+   wcześniej ściskał się w wąskiej kolumnie obok liczby. */
+.mini-rank-card {
+  align-items: start;
+  row-gap: 8px;
 }
 
-.reward-axis.compact .reward-gift svg {
-  width: 8px;
-  height: 8px;
+.mini-rank-card .rank-points {
+  align-self: center;
 }
 
-.reward-axis.compact .reward-gift-check svg {
-  width: 11px;
-  height: 11px;
+.mini-rank-card .reward-axis {
+  grid-column: 1 / -1;
+  margin-top: 0;
 }
 
 /* ===================== Ekran: próg osiągnięty ===================== */
