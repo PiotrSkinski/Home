@@ -48,6 +48,8 @@
   const RECURRENCE = {
     none: "Jednorazowe",
     daily: "Codziennie",
+    every2days: "Co 2 dni",
+    every3days: "Co 3 dni",
     weekly: "Co tydzień",
     biweekly: "Co 2 tygodnie",
     triweekly: "Co 3 tygodnie",
@@ -5648,6 +5650,12 @@
     const date = fromISO(dateIso);
     if (recurrenceType === "daily") {
       return toISO(addDays(date, 1));
+    }
+    if (recurrenceType === "every2days") {
+      return toISO(addDays(date, 2));
+    }
+    if (recurrenceType === "every3days") {
+      return toISO(addDays(date, 3));
     }
     if (recurrenceType === "weekly") {
       return toISO(addDays(date, 7));
