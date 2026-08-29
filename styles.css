@@ -3699,3 +3699,94 @@ body.is-modal-open {
     padding-bottom: calc(10px + env(safe-area-inset-bottom));
   }
 }
+
+/* ===================== Prezenty nad progami nagród ===================== */
+:root {
+  --gold: #e0a920;
+  --gold-light: #f7d774;
+  --gold-deep: #96690f;
+}
+
+/* Prezent wisi nad znacznikiem, więc oś potrzebuje zapasu od góry —
+   bez tego ikona wchodziłaby na tekst nad paskiem. */
+.reward-axis {
+  margin-top: 30px;
+}
+
+.reward-axis.compact {
+  margin-top: 28px;
+}
+
+.reward-gift {
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  display: grid;
+  width: 21px;
+  height: 21px;
+  transform: translateX(-50%);
+  place-items: center;
+  border: 1.5px solid var(--gold);
+  border-radius: 50%;
+  background: linear-gradient(160deg, #fffaf0, #ffeec8);
+  color: var(--gold-deep);
+  box-shadow: 0 1px 4px rgba(120, 85, 10, 0.26);
+}
+
+.reward-gift svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Przyznana nagroda: krążek nabiera złota i dostaje ptaszka */
+.reward-gift.is-granted {
+  border-color: var(--gold-deep);
+  background: linear-gradient(160deg, var(--gold-light), var(--gold));
+  color: #6b4a09;
+  box-shadow:
+    0 0 9px rgba(224, 169, 32, 0.7),
+    0 1px 4px rgba(120, 85, 10, 0.3);
+}
+
+.reward-gift-check {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  border: 1.5px solid #fffdf6;
+  border-radius: 50%;
+  background: #fffdf6;
+  color: var(--gold-deep);
+  box-shadow: 0 1px 3px rgba(120, 85, 10, 0.35);
+}
+
+.reward-gift-check svg {
+  width: 9px;
+  height: 9px;
+}
+
+.reward-axis.compact .reward-gift {
+  width: 18px;
+  height: 18px;
+  bottom: calc(100% + 4px);
+}
+
+.reward-axis.compact .reward-gift svg {
+  width: 10px;
+  height: 10px;
+}
+
+.reward-axis.compact .reward-gift-check {
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+}
+
+.reward-axis.compact .reward-gift-check svg {
+  width: 8px;
+  height: 8px;
+}

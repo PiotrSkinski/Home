@@ -2158,7 +2158,7 @@
                 <span class="rank-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <small>${row.week} pkt w 7 dni</small>
-                  ${renderRewardAxis(row.points, "compact")}
+                  ${renderRewardAxis(row.points, "compact", row.user.id)}
                 </span>
                 <span class="rank-points">${formatPoints(row.points)} pkt</span>
               </div>
@@ -3320,7 +3320,7 @@
                 <div class="leader-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <span class="compact-meta">${row.counts.today} dziś · ${row.counts.week} w tygodniu · ${row.counts.month} w miesiącu</span>
-                  ${renderRewardAxis(row.points)}
+                  ${renderRewardAxis(row.points, "", row.user.id)}
                 </div>
                 <div class="person-points">${formatPoints(row.points)} pkt</div>
               </div>
@@ -3369,7 +3369,47 @@
     return `<p class="home-bonus-banner">🎉 Premia domowa aktywna, punkty x2! Wszyscy przekroczyli ${MONTHLY_GOAL} pkt.</p>`;
   }
 
-  function renderRewardAxis(points, variant = "") {
+  // Nagroda liczy się jako przyznana tylko w bieżącym okresie punktowym —
+  // punkty resetują się co miesiąc, więc ptaszek z lipca nie może wisieć
+  // przy progu, do którego ktoś dopiero się wspina w sierpniu.
+  function isRewardGranted(userId, thresholdPoints) {
+    if (!userId) {
+      return false;
+    }
+    const currentPeriod = getPointPeriodKey();
+    return state.rewardClaims.some(
+      (claim) =>
+        claim.userId === userId &&
+        claim.threshold === thresholdPoints &&
+        claim.status === "done" &&
+        getRewardClaimPeriod(claim) === currentPeriod
+    );
+  }
+
+  function renderRewardGift(granted) {
+    return `
+      <span class="reward-gift${granted ? " is-granted" : ""}" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3.5" y="10" width="17" height="10.5" rx="1.4" />
+          <path d="M3.5 14h17" />
+          <path d="M12 10v10.5" />
+          <path d="M12 10C10.2 10 7.4 9.6 7.4 7.6S9.2 5.2 10.1 5.7 12 8.2 12 10z" />
+          <path d="M12 10c1.8 0 4.6-.4 4.6-2.4S14.8 5.2 13.9 5.7 12 8.2 12 10z" />
+        </svg>
+        ${
+          granted
+            ? `<span class="reward-gift-check">
+                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+                   <path d="M20 6.5 9.2 17.3 4 12.1" />
+                 </svg>
+               </span>`
+            : ""
+        }
+      </span>
+    `;
+  }
+
+  function renderRewardAxis(points, variant = "", userId = null) {
     const axisMax = Math.max(REWARD_THRESHOLDS[REWARD_THRESHOLDS.length - 1].points, points, 1);
     const fillWidth = Math.min(100, Math.max(3, (points / axisMax) * 100));
     // Im więcej zdobytych progów, tym mocniejsza poświata. Na maksymalnym progu
@@ -3383,8 +3423,11 @@
         ${REWARD_THRESHOLDS.map((threshold) => {
           const left = Math.min(100, (threshold.points / axisMax) * 100);
           const reached = points >= threshold.points ? "is-reached" : "";
+          const granted = isRewardGranted(userId, threshold.points);
+          const opis = granted ? `${threshold.label}: ${threshold.points} pkt — nagroda przyznana` : `${threshold.label}: ${threshold.points} pkt`;
           return `
-            <span class="reward-axis-marker ${reached}" style="left:clamp(20px, ${left}%, calc(100% - 20px))" title="${threshold.label}: ${threshold.points} pkt">
+            <span class="reward-axis-marker ${reached}" style="left:clamp(20px, ${left}%, calc(100% - 20px))" title="${escapeAttribute(opis)}">
+              ${renderRewardGift(granted)}
               <span>${threshold.points}</span>
             </span>
           `;
