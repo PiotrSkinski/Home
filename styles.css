@@ -3368,12 +3368,12 @@ body::before {
 
   @keyframes zar-przod {
     from { background-position: 0 0, 0 0, 0 0; }
-    to   { background-position: -312px 0, -312px 0, -312px 0; }
+    to   { background-position: 312px 0, 312px 0, 312px 0; }
   }
 
   @keyframes zar-tyl {
     from { background-position: 0 0, 0 0; }
-    to   { background-position: -440px 0, -440px 0; }
+    to   { background-position: 440px 0, 440px 0; }
   }
 
   @keyframes puls-0 {
