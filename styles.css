@@ -4624,3 +4624,43 @@ body.is-modal-open {
 .push-switch-knob {
   will-change: auto;
 }
+
+/* ===================== Warstwa okna bez filtrów ===================== */
+/* Objaw: przy animacji przełącznika tło na jedną klatkę „wskakuje na front”.
+   Drzewo DOM się przy tym nie zmienia (zmierzone: zero mutacji), więc to
+   zjawisko malowania, nie przebudowy. Każdy element z backdrop-filter to
+   obszar, który przeglądarka musi przeliczyć, gdy cokolwiek nad nim się
+   ruszy — a w trakcie tego przeliczania rozmycie potrafi na moment zniknąć
+   i widać ostre tło.
+   Zdejmujemy filtry z CAŁEJ warstwy okna naraz: samego tła, przycisków
+   ikonowych w arkuszu i kart wniosku. Przyciemnienie tła jest mocniejsze,
+   żeby zrekompensować brak rozmycia. Szkło w zwykłym widoku zostaje. */
+.modal-backdrop,
+.modal-backdrop .icon-button,
+.modal-backdrop .ghost-button,
+.modal-backdrop .request-card,
+.reward-celebration {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.modal-backdrop {
+  background: rgba(46, 36, 64, 0.55);
+}
+
+.reward-celebration {
+  background: rgba(46, 36, 64, 0.62);
+}
+
+/* Bez rozmycia te przyciski potrzebują własnego, krytego tła */
+.modal-backdrop .icon-button {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.modal-backdrop .ghost-button {
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.modal-backdrop .request-card {
+  background: rgba(255, 255, 255, 0.72);
+}
