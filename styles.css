@@ -2112,7 +2112,7 @@ button.metric {
     font-size: 0.76rem;
   }
 
-  .topbar-brand .household-badge .household-switch-button span {
+  .topbar-brand .household-badge .household-switch-button .household-meta {
     display: none;
   }
 
@@ -3916,4 +3916,85 @@ body.is-modal-open {
     35%      { transform: scale(1.07) rotate(-5deg); }
     65%      { transform: scale(1.07) rotate(5deg); }
   }
+}
+
+/* ===================== Kod domu w belce ===================== */
+.household-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* ===================== Panel ustawień ===================== */
+.settings-tiles {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-tile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.55);
+  padding: 14px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.settings-tile:hover {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.settings-tile:active {
+  transform: scale(0.985);
+}
+
+.settings-tile-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  font-size: 1.05rem;
+}
+
+.settings-tile-body {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.settings-tile-body strong {
+  font-size: var(--fs-body);
+}
+
+.settings-tile-body small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-tile-arrow {
+  color: var(--muted);
+  font-size: 1.2rem;
+}
+
+/* Nagłówek podstrony ustawień mieści przycisk powrotu obok tytułu */
+.modal-title .icon-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  margin-right: 4px;
+  vertical-align: middle;
 }

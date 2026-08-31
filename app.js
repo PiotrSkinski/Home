@@ -28,11 +28,57 @@
   const SHOPPING_ITEM_POINTS = 0.5;
   const SHOPPING_DELIVERY_POINTS = 5;
   const COLORS = ["#6d28d9", "#db2777", "#2563eb", "#0d9488", "#ea580c", "#7c3aed"];
-  const REWARD_THRESHOLDS = [
+  const DEFAULT_REWARD_THRESHOLDS = [
     { points: 200, label: "Nagroda" },
     { points: 350, label: "Duża nagroda" },
     { points: 500, label: "Super nagroda" }
   ];
+  const DEFAULT_DAY_START = 0;
+
+  // Progi mogą być zmienione w ustawieniach; bez zmian obowiązują domyślne.
+  function getRewardThresholds() {
+    const wlasne = state.household?.rewardThresholds;
+    if (!Array.isArray(wlasne) || wlasne.length !== DEFAULT_REWARD_THRESHOLDS.length) {
+      return DEFAULT_REWARD_THRESHOLDS;
+    }
+    const progi = wlasne
+      .map((prog, i) => ({
+        points: Number(prog?.points),
+        label: String(prog?.label || DEFAULT_REWARD_THRESHOLDS[i].label)
+      }))
+      .filter((prog) => Number.isFinite(prog.points) && prog.points > 0);
+    if (progi.length !== DEFAULT_REWARD_THRESHOLDS.length) {
+      return DEFAULT_REWARD_THRESHOLDS;
+    }
+    // Progi muszą rosnąć, inaczej oś nagród i wykrywanie zdobycia się sypią.
+    for (let i = 1; i < progi.length; i += 1) {
+      if (progi[i].points <= progi[i - 1].points) {
+        return DEFAULT_REWARD_THRESHOLDS;
+      }
+    }
+    return progi;
+  }
+
+  function getDayStartHour() {
+    const h = Number(state.household?.dayStart);
+    return Number.isInteger(h) && h >= 0 && h <= 23 ? h : DEFAULT_DAY_START;
+  }
+
+  function getDayEndHour() {
+    const h = Number(state.household?.dayEnd);
+    return Number.isInteger(h) && h >= 0 && h <= 23 ? h : getDayStartHour();
+  }
+
+  // „Dziś” zależy od godziny startu doby: przy starcie o 2:00 zadanie
+  // odhaczone o 1:30 wciąż należy do dnia poprzedniego.
+  function todayIso() {
+    const now = new Date();
+    if (now.getHours() < getDayStartHour()) {
+      return toISO(addDays(now, -1));
+    }
+    return toISO(now);
+  }
+
   const MONTHLY_GOAL = 500;
   const CARRYOVER_DIVISOR = 4;
   const HISTORY_FEED_LIMIT = 60;
@@ -78,11 +124,12 @@
   let activeFilter = "all";
   let searchQuery = "";
   let selectedTaskId = routeTaskId || pickInitialTaskId();
-  let selectedDate = toISO(new Date());
+  let selectedDate = todayIso();
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
   let shoppingModalTaskId = null;
   let rewardCelebration = null;
+  let settingsPanel = null;
   let editingTaskId = null;
   let taskModalKind = "standard";
   let requestTaskId = null;
@@ -312,9 +359,9 @@
         assigneeId: assigneeIds[0],
         assigneeIds,
         createdById: task.createdById || nextState.users[0].id,
-        dueDate: task.dueDate || toISO(new Date()),
+        dueDate: task.dueDate || todayIso(),
         reminderTime: task.reminderTime || "18:00",
-        assignedAt: task.assignedAt || task.createdAt || `${task.dueDate || toISO(new Date())}T12:00:00.000Z`,
+        assignedAt: task.assignedAt || task.createdAt || `${task.dueDate || todayIso()}T12:00:00.000Z`,
         priority: taskType === "shopping" ? "medium" : PRIORITY[task.priority] ? task.priority : "medium",
         status,
         completedAt: task.completedAt || null,
@@ -425,7 +472,7 @@
   }
 
   function isHouseholdPausedNow() {
-    return isDateWithinPause(toISO(new Date()));
+    return isDateWithinPause(todayIso());
   }
 
   function countPausedDaysInRange(startDate, endDate) {
@@ -462,7 +509,7 @@
   }
 
   function isUserAbsentNow(userId) {
-    return isUserAbsentOn(userId, toISO(new Date()));
+    return isUserAbsentOn(userId, todayIso());
   }
 
   // Dni, za które nie nalicza się kara zwłoki: pauza domu plus własna nieobecność.
@@ -593,7 +640,8 @@
     claims.forEach((claim) => knownRewardClaimIds.add(claim.id));
 
     if (swiezy) {
-      sweepCelebration();
+      // Próg przebity własnym zadaniem — konfetti leci przez cały ekran.
+      startKonfetti(2800);
     }
   }
 
@@ -1169,6 +1217,7 @@
       ${activeModal === "login" ? renderLoginModal() : ""}
       ${activeModal === "pause" ? renderPauseModal() : ""}
       ${activeModal === "shopping-item" ? renderShoppingItemModal() : ""}
+      ${activeModal === "settings" ? renderSettingsModal() : ""}
       ${rewardCelebration ? renderRewardCelebration() : ""}
       ${notificationPanelOpen ? renderNotificationPanel() : ""}
     `;
@@ -1766,18 +1815,18 @@
       <div class="household-badge household-badge-row">
         <button class="household-switch-button" type="button" data-action="change-household" aria-label="Zmień gospodarstwo">
           <strong>${escapeHtml(state.household.name)}</strong>
-          <span>${state.users.length} ${state.users.length === 1 ? "domownik" : "domowników"} · ${escapeHtml(
-            state.household.inviteCode
-          )}</span>
+          <span class="household-meta">${state.users.length} ${
+            state.users.length === 1 ? "domownik" : "domowników"
+          } · </span><span class="household-code">${escapeHtml(state.household.inviteCode)}</span>
         </button>
         <button
           class="icon-button household-pause-button ${hasPause ? "is-active" : ""}"
           type="button"
-          data-action="open-pause-modal"
-          aria-label="${isPaused ? "Zadania wstrzymane" : "Wstrzymaj zadania"}"
-          title="${isPaused ? "Zadania wstrzymane" : "Wstrzymaj zadania"}"
+          data-action="open-settings"
+          aria-label="Ustawienia"
+          title="${isPaused ? "Ustawienia — zadania wstrzymane" : "Ustawienia"}"
         >
-          <span aria-hidden="true">${isPaused ? "▶" : "⏸"}</span>
+          <span aria-hidden="true">⚙</span>
         </button>
       </div>
     `;
@@ -1957,8 +2006,144 @@
     `;
   }
 
+  function renderSettingsModal() {
+    if (settingsPanel === "dzien") {
+      return renderDayLengthPanel();
+    }
+    if (settingsPanel === "progi") {
+      return renderThresholdsPanel();
+    }
+
+    const pauzaAktywna = Boolean(state.household.pause) || state.users.some((user) => user.absence);
+    const start = getDayStartHour();
+    const koniec = getDayEndHour();
+    const progi = getRewardThresholds().map((prog) => prog.points).join(" · ");
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="settings-title">Ustawienia</h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <div class="settings-tiles">
+            <button class="settings-tile" type="button" data-action="open-pause-modal">
+              <span class="settings-tile-icon" aria-hidden="true">🏝️</span>
+              <span class="settings-tile-body">
+                <strong>Urlop i wstrzymanie</strong>
+                <small>${pauzaAktywna ? "Aktywne — ktoś jest nieobecny" : "Nikt nie jest nieobecny"}</small>
+              </span>
+              <span class="settings-tile-arrow" aria-hidden="true">›</span>
+            </button>
+            <button class="settings-tile" type="button" data-action="settings-panel" data-panel="dzien">
+              <span class="settings-tile-icon" aria-hidden="true">🕑</span>
+              <span class="settings-tile-body">
+                <strong>Trwanie dnia</strong>
+                <small>${formatHour(start)} — ${formatHour(koniec)}</small>
+              </span>
+              <span class="settings-tile-arrow" aria-hidden="true">›</span>
+            </button>
+            <button class="settings-tile" type="button" data-action="settings-panel" data-panel="progi">
+              <span class="settings-tile-icon" aria-hidden="true">🎁</span>
+              <span class="settings-tile-body">
+                <strong>Progi punktowe</strong>
+                <small>${progi} pkt</small>
+              </span>
+              <span class="settings-tile-arrow" aria-hidden="true">›</span>
+            </button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function formatHour(h) {
+    return `${String(h).padStart(2, "0")}:00`;
+  }
+
+  function hourOptions(selected) {
+    return Array.from({ length: 24 }, (_, h) =>
+      `<option value="${h}" ${h === selected ? "selected" : ""}>${formatHour(h)}</option>`
+    ).join("");
+  }
+
+  function renderDayLengthPanel() {
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="day-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="day-title">
+              <button class="icon-button" type="button" data-action="settings-panel" data-panel="" aria-label="Wróć">‹</button>
+              Trwanie dnia
+            </h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="task-form" data-form="day-length">
+            <div class="form-grid">
+              <label>
+                <span class="label">Dzień zaczyna się o</span>
+                <select class="input" name="dayStart">${hourOptions(getDayStartHour())}</select>
+              </label>
+              <label>
+                <span class="label">Dzień kończy się o</span>
+                <select class="input" name="dayEnd">${hourOptions(getDayEndHour())}</select>
+              </label>
+              <span class="form-hint wide">
+                Liczy się godzina startu: przy 02:00 zadanie odhaczone o 01:30 wciąż należy do dnia poprzedniego,
+                a zadania na jutro pojawią się dopiero po drugiej w nocy. Ta sama godzina po obu stronach to zwykła doba.
+              </span>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-action="settings-panel" data-panel="">Wróć</button>
+              <button class="button" type="submit">Zapisz</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderThresholdsPanel() {
+    const progi = getRewardThresholds();
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="thresholds-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="thresholds-title">
+              <button class="icon-button" type="button" data-action="settings-panel" data-panel="" aria-label="Wróć">‹</button>
+              Progi punktowe
+            </h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="task-form" data-form="thresholds">
+            <div class="form-grid">
+              ${progi
+                .map(
+                  (prog, i) => `
+                    <label>
+                      <span class="label">${escapeHtml(prog.label)}</span>
+                      <input class="input" type="number" name="prog${i}" value="${prog.points}" min="10" max="5000" step="10" required />
+                    </label>
+                  `
+                )
+                .join("")}
+              <span class="form-hint wide">
+                Progi muszą rosnąć. Zmiana działa od razu dla wszystkich domowników —
+                nagrody już przyznane w tym miesiącu zostają.
+              </span>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-action="settings-panel" data-panel="">Wróć</button>
+              <button class="button" type="submit">Zapisz</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
   function renderPauseModal() {
-    const today = toISO(new Date());
+    const today = todayIso();
     // Domyślnie edytujemy to, co już trwa: własną nieobecność albo pauzę domu.
     const wlasna = getUserAbsence(state.currentUserId);
     const zakres = pauseModalTarget === "dom" ? state.household.pause : getUserAbsence(pauseModalTarget);
@@ -2404,7 +2589,7 @@
     const className = [
       "day-cell",
       day.inMonth ? "" : "is-muted",
-      day.iso === toISO(new Date()) ? "is-today" : "",
+      day.iso === todayIso() ? "is-today" : "",
       day.iso === selectedDate ? "is-selected" : ""
     ]
       .filter(Boolean)
@@ -2536,7 +2721,7 @@
                     .map(
                       (item) => `
                         <button class="notification-item" type="button" data-action="${
-                      item.kind === "reward" ? "open-reward-celebration" : "select-task"
+                      item.kind === "reward" || item.kind === "bonus" ? "open-reward-celebration" : "select-task"
                     }" data-task-id="${item.taskId}" data-notification-id="${item.id}">
                           <span class="avatar small" style="background:${item.read ? "#a99a8f" : "#b85f45"}">!</span>
                           <span class="item-body">
@@ -2601,7 +2786,7 @@
             </div>
             ${renderLeaderboard()}
             ${renderTaskCountSummary()}
-            ${renderPointResetNote()}
+            ${renderPointRulesNote()}
           </section>
 
           <section class="section-block">
@@ -2621,7 +2806,7 @@
             <h2>Progi nagród</h2>
           </div>
           <div class="reward-grid">
-            ${REWARD_THRESHOLDS.map((threshold) =>
+            ${getRewardThresholds().map((threshold) =>
               reward("★", threshold.label, false, `Próg ${threshold.points} pkt. Po osiągnięciu powstaje zadanie nagrodowe dla innego domownika.`)
             ).join("")}
           </div>
@@ -3240,7 +3425,7 @@
     const isShopping = isShoppingTask(editingTask) || (!editingTask && taskModalKind === "shopping");
     const values = {
       title: editingTask?.title || (isShopping ? "Zakupy" : ""),
-      dueDate: editingTask?.dueDate || selectedDate || toISO(new Date()),
+      dueDate: editingTask?.dueDate || selectedDate || todayIso(),
       reminderTime: editingTask?.reminderTime || "18:00",
       assigneeIds: editingTask ? getAssigneeIds(editingTask) : [state.currentUserId],
       priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
@@ -3364,7 +3549,13 @@
   }
 
   function renderRewardCelebration() {
-    const { userName, threshold } = rewardCelebration;
+    const { userName, threshold, kind } = rewardCelebration;
+    const premia = kind === "bonus";
+    const eyebrow = premia ? "Premia domowa" : "Próg osiągnięty";
+    const tytul = premia ? "Cały dom przekroczył 500 pkt!" : `${escapeHtml(userName)} ma ${threshold} pkt!`;
+    const tresc = premia
+      ? `Od teraz punkty ponad ${MONTHLY_GOAL} liczą się podwójnie. Pierwsze ${MONTHLY_GOAL} pkt zawsze pojedynczo.`
+      : "Teraz Ty przyznajesz nagrodę.";
     return `
       <div class="reward-celebration" role="dialog" aria-modal="true" aria-labelledby="reward-celebration-title">
         <div class="reward-celebration-card">
@@ -3377,14 +3568,16 @@
               <path d="M12 10c1.8 0 4.6-.4 4.6-2.4S14.8 5.2 13.9 5.7 12 8.2 12 10z" />
             </svg>
           </span>
-          <p class="reward-celebration-eyebrow">Próg osiągnięty</p>
-          <h2 class="reward-celebration-title" id="reward-celebration-title">
-            ${escapeHtml(userName)} ma ${threshold} pkt!
-          </h2>
-          <p class="reward-celebration-text">Teraz Ty przyznajesz nagrodę.</p>
+          <p class="reward-celebration-eyebrow">${eyebrow}</p>
+          <h2 class="reward-celebration-title" id="reward-celebration-title">${tytul}</h2>
+          <p class="reward-celebration-text">${tresc}</p>
           <div class="reward-celebration-actions">
-            <button class="button" type="button" data-action="open-reward-task">Zobacz zadanie</button>
-            <button class="ghost-button" type="button" data-action="close-reward-celebration">Później</button>
+            ${
+              premia
+                ? `<button class="button" type="button" data-action="close-reward-celebration">Super!</button>`
+                : `<button class="button" type="button" data-action="open-reward-task">Zobacz zadanie</button>
+                   <button class="ghost-button" type="button" data-action="close-reward-celebration">Później</button>`
+            }
           </div>
         </div>
       </div>
@@ -3406,7 +3599,7 @@
                 .map(
                   (item) => `
                     <button class="notification-item" type="button" data-action="${
-                      item.kind === "reward" ? "open-reward-celebration" : "select-task"
+                      item.kind === "reward" || item.kind === "bonus" ? "open-reward-celebration" : "select-task"
                     }" data-task-id="${item.taskId}" data-notification-id="${item.id}">
                       <span class="avatar small" style="background:${item.read ? "#a99a8f" : "#b85f45"}">!</span>
                       <span class="item-body">
@@ -3476,7 +3669,7 @@
 
   function getUserTaskCounts(userId) {
     const doneTasks = state.tasks.filter((task) => task.status === "done" && isAssignee(task, userId));
-    const today = toISO(new Date());
+    const today = todayIso();
     return {
       today: doneTasks.filter((task) => task.completedAt && toISO(new Date(task.completedAt)) === today).length,
       week: doneTasks.filter((task) => isWithinLastDays(task.completedAt, 7)).length,
@@ -3498,10 +3691,20 @@
     return `<p class="points-reset-note">Zadania w domu: ${counts.total} od początku · ${counts.week} z 7 dni · ${counts.month} od początku miesiąca.</p>`;
   }
 
+  // Mini ranking ma być krótki — zostaje sam reset. Reszta zasad żyje
+  // w pełnym rankingu, gdzie jest miejsce, żeby je wyjaśnić.
   function renderPointResetNote() {
     return `
       ${renderHomeBonusBanner()}
+      <p class="points-reset-note">Punkty resetują się 1. dnia każdego miesiąca.</p>
+    `;
+  }
+
+  function renderPointRulesNote() {
+    return `
+      ${renderHomeBonusBanner()}
       <p class="points-reset-note">Punkty resetują się 1. dnia każdego miesiąca. Nadwyżka ponad ${MONTHLY_GOAL} pkt ÷ ${CARRYOVER_DIVISOR} wraca jako bonus w nowym miesiącu.</p>
+      <p class="points-reset-note">Gdy <strong>każdy</strong> domownik przekroczy ${MONTHLY_GOAL} pkt, włącza się premia domowa: od tego momentu punkty ponad ${MONTHLY_GOAL} liczą się podwójnie. Pierwsze ${MONTHLY_GOAL} pkt zawsze liczy się pojedynczo.</p>
     `;
   }
 
@@ -3554,17 +3757,17 @@
   }
 
   function renderRewardAxis(points, variant = "", userId = null) {
-    const axisMax = Math.max(REWARD_THRESHOLDS[REWARD_THRESHOLDS.length - 1].points, points, 1);
+    const axisMax = Math.max(getRewardThresholds()[getRewardThresholds().length - 1].points, points, 1);
     const fillWidth = Math.min(100, Math.max(3, (points / axisMax) * 100));
     // Im więcej zdobytych progów, tym mocniejsza poświata. Na maksymalnym progu
     // pasek przechodzi w tryb "laser".
-    const osiagniete = REWARD_THRESHOLDS.filter((threshold) => points >= threshold.points).length;
-    const maks = points >= REWARD_THRESHOLDS[REWARD_THRESHOLDS.length - 1].points;
+    const osiagniete = getRewardThresholds().filter((threshold) => points >= threshold.points).length;
+    const maks = points >= getRewardThresholds()[getRewardThresholds().length - 1].points;
 
     return `
       <div class="reward-axis ${variant}" aria-label="Postęp do nagród">
         <span class="reward-axis-fill glow-${osiagniete}${maks ? " is-max" : ""}" style="width:${fillWidth}%"></span>
-        ${REWARD_THRESHOLDS.map((threshold) => {
+        ${getRewardThresholds().map((threshold) => {
           const left = Math.min(100, (threshold.points / axisMax) * 100);
           const osiagniety = points >= threshold.points;
           const reached = osiagniety ? "is-reached" : "";
@@ -3672,9 +3875,25 @@
       return;
     }
 
+    if (action === "open-settings") {
+      settingsPanel = null;
+      activeModal = "settings";
+      notificationPanelOpen = false;
+      moreMenuOpen = false;
+      render();
+      return;
+    }
+
+    if (action === "settings-panel") {
+      settingsPanel = actionElement.dataset.panel || null;
+      render();
+      return;
+    }
+
     if (action === "open-reward-celebration") {
       const powiadomienie = state.notifications.find((item) => item.id === actionElement.dataset.notificationId);
       rewardCelebration = {
+        kind: powiadomienie?.kind === "bonus" ? "bonus" : "reward",
         userName: powiadomienie?.rewardUserName || "Domownik",
         threshold: powiadomienie?.rewardThreshold || 0,
         taskId: actionElement.dataset.taskId || powiadomienie?.taskId || null
@@ -4024,6 +4243,39 @@
 
     event.preventDefault();
     const formType = form.dataset.form;
+
+    if (formType === "day-length") {
+      const data = new FormData(form);
+      state.household.dayStart = Number(data.get("dayStart"));
+      state.household.dayEnd = Number(data.get("dayEnd"));
+      settingsPanel = null;
+      saveState();
+      render();
+      toast("Zapisano trwanie dnia", `Doba liczy się od ${formatHour(getDayStartHour())}.`);
+      return;
+    }
+
+    if (formType === "thresholds") {
+      const data = new FormData(form);
+      const domyslne = getRewardThresholds();
+      const progi = domyslne.map((prog, i) => ({
+        points: Number(data.get(`prog${i}`)),
+        label: prog.label
+      }));
+      const rosnace = progi.every(
+        (prog, i) => Number.isFinite(prog.points) && prog.points > 0 && (i === 0 || prog.points > progi[i - 1].points)
+      );
+      if (!rosnace) {
+        toast("Progi muszą rosnąć", "Każdy kolejny próg musi być wyższy od poprzedniego.");
+        return;
+      }
+      state.household.rewardThresholds = progi;
+      settingsPanel = null;
+      saveState();
+      render();
+      toast("Zapisano progi", progi.map((prog) => prog.points).join(" · ") + " pkt");
+      return;
+    }
 
     if (formType === "shopping-item") {
       const data = new FormData(form);
@@ -4668,7 +4920,7 @@
   }
 
   function getSuggestedPostponeDate(task) {
-    const today = toISO(new Date());
+    const today = todayIso();
     const base = task.dueDate > today ? task.dueDate : today;
     const proposal =
       task.recurrence.type !== "none" ? getNextDueDate(task.dueDate, task.recurrence.type) : toISO(addDays(fromISO(base), 3));
@@ -5141,7 +5393,7 @@
     } else if (activeFilter === "done") {
       tasks = tasks.filter((task) => task.status === "done");
     } else if (activeFilter === "done-today") {
-      tasks = tasks.filter((task) => task.status === "done" && task.completedAt && toISO(new Date(task.completedAt)) === toISO(new Date()));
+      tasks = tasks.filter((task) => task.status === "done" && task.completedAt && toISO(new Date(task.completedAt)) === todayIso());
     }
 
     if (searchQuery.trim()) {
@@ -5184,7 +5436,7 @@
   }
 
   function getUpcomingReminders() {
-    const today = toISO(new Date());
+    const today = todayIso();
     return sortTasks(
       state.tasks.filter((task) => task.status !== "done" && task.dueDate >= today && task.reminderTime)
     ).sort((a, b) => `${a.dueDate} ${a.reminderTime}`.localeCompare(`${b.dueDate} ${b.reminderTime}`));
@@ -5504,10 +5756,14 @@
 
   function getUserPoints(userId, lastDays = null) {
     const base = getBaseUserPoints(userId, lastDays);
-    if (lastDays == null && isHomeBonusActive()) {
-      return base * 2;
+    if (lastDays != null || !isHomeBonusActive() || base <= MONTHLY_GOAL) {
+      return base;
     }
-    return base;
+    // Premia dotyczy wyłącznie NADWYŻKI ponad cel. Podwajanie całej puli
+    // sprawiało, że sama premia wypychała każdego przez progi nagród —
+    // wystarczyło przenieść punkty na nowy miesiąc, żeby nagroda należała
+    // się od pierwszego dnia.
+    return MONTHLY_GOAL + (base - MONTHLY_GOAL) * 2;
   }
 
   // Zadanie porzucone przez nieobecnych staje się długiem całego domu: nieobecny
@@ -5561,6 +5817,20 @@
     const everyoneReached = state.users.every((user) => getBaseUserPoints(user.id) >= MONTHLY_GOAL);
     if (everyoneReached) {
       state.household.homeBonus = currentPeriod;
+      state.users.forEach((user) => {
+        state.notifications.unshift({
+          id: uid("notification"),
+          taskId: null,
+          kind: "bonus",
+          push: true,
+          title: "Premia domowa włączona",
+          body: `Cały dom przekroczył ${MONTHLY_GOAL} pkt. Od teraz punkty ponad ${MONTHLY_GOAL} liczą się podwójnie.`,
+          recipientUserId: user.id,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+      });
+      state.notifications = state.notifications.slice(0, NOTIFICATIONS_LIMIT);
       return true;
     }
     return false;
@@ -5635,7 +5905,7 @@
     const assignedDate = task.assignedAt ? fromISO(toISO(new Date(task.assignedAt))) : dueDate;
     const penaltyBaseDate = assignedDate > dueDate ? assignedDate : dueDate;
     const endDate =
-      task.status === "done" && task.completedAt ? fromISO(toISO(new Date(task.completedAt))) : fromISO(toISO(new Date()));
+      task.status === "done" && task.completedAt ? fromISO(toISO(new Date(task.completedAt))) : fromISO(todayIso());
 
     if (daysBetween(penaltyBaseDate, endDate) <= 0) {
       return 0;
@@ -5708,7 +5978,7 @@
     state.users.forEach((user) => {
       const points = getUserPoints(user.id);
 
-      REWARD_THRESHOLDS.forEach((threshold) => {
+      getRewardThresholds().forEach((threshold) => {
         const alreadyClaimed = state.rewardClaims.some(
           (claim) =>
             claim.userId === user.id &&
@@ -5744,6 +6014,7 @@
           id: uid("notification"),
           taskId: task.id,
           kind: "reward",
+          push: true,
           rewardUserName: user.name,
           rewardThreshold: threshold.points,
           title: "Nagroda do przyznania",
@@ -5935,7 +6206,7 @@
   // który już minął. Efekt: przypomnienia i „niewykonane zadanie” tego samego
   // wieczoru, mimo że zadanie zostało właśnie zamknięte.
   function getCaughtUpDueDate(dateIso, recurrence) {
-    const today = toISO(new Date());
+    const today = todayIso();
     let next = dateIso;
     let guard = 0;
     while (next <= today && guard < 1000) {
@@ -6033,11 +6304,11 @@
   }
 
   function isToday(task) {
-    return task.dueDate === toISO(new Date());
+    return task.dueDate === todayIso();
   }
 
   function isOverdue(task) {
-    return task.status === "open" && task.dueDate < toISO(new Date());
+    return task.status === "open" && task.dueDate < todayIso();
   }
 
   function isWithinLastDays(dateString, days) {
@@ -6090,7 +6361,7 @@
   }
 
   function formatHumanDate(dateIso) {
-    const today = toISO(new Date());
+    const today = todayIso();
     const tomorrow = toISO(addDays(new Date(), 1));
     const yesterday = toISO(addDays(new Date(), -1));
     if (dateIso === today) {
