@@ -359,6 +359,23 @@
     return nextState;
   }
 
+  function normalizeHour(value) {
+    const h = Number(value);
+    return Number.isInteger(h) && h >= 0 && h <= 23 ? h : null;
+  }
+
+  // Zapisujemy tylko kształt, który da się użyć. Właściwą walidację kolejności
+  // robi getRewardThresholds() przy odczycie.
+  function normalizeThresholds(value) {
+    if (!Array.isArray(value)) {
+      return null;
+    }
+    const progi = value
+      .filter((prog) => prog && Number.isFinite(Number(prog.points)))
+      .map((prog) => ({ points: Number(prog.points), label: String(prog.label || "Nagroda") }));
+    return progi.length ? progi : null;
+  }
+
   function normalizeState(data) {
     const fallbackState = createSeedState();
     const nextState = {
@@ -368,7 +385,16 @@
         inviteCode: data.household?.inviteCode || data.inviteCode || "",
         pause: normalizeDateRange(data.household?.pause),
         homeBonus: data.household?.homeBonus || null,
-        carryoverDonePeriod: data.household?.carryoverDonePeriod || null
+        carryoverDonePeriod: data.household?.carryoverDonePeriod || null,
+        // Poniższe cztery pola przepadały przy KAŻDYM wczytaniu stanu, bo ta
+        // funkcja budowała gospodarstwo od zera ze sztywnej listy. Na serwer
+        // szły poprawnie, ale ginęły przy odczycie i okrojona wersja wracała
+        // do bazy — stąd hasło admina, godziny i progi trzeba było ustawiać
+        // od nowa po każdym otwarciu aplikacji.
+        adminPin: /^[0-9]{4}$/.test(String(data.household?.adminPin || "")) ? String(data.household.adminPin) : null,
+        dayStart: normalizeHour(data.household?.dayStart),
+        dayEnd: normalizeHour(data.household?.dayEnd),
+        rewardThresholds: normalizeThresholds(data.household?.rewardThresholds)
       },
       isAuthenticated: false,
       currentUserId: data.currentUserId,
@@ -1711,9 +1737,18 @@
     if (!activeModal && !rewardCelebration && !notificationPanelOpen) {
       return;
     }
-    // Kontrolki mają własne gesty — suwak powiększenia awatara przestawał się
+    // Kadrowanie awatara obsługuje gest samo — strona nie może się przy tym
+    // ruszać, więc tu blokujemy aktywnie, a nie przez wyjątek.
+    if (event.target.closest?.(".avatar-stage")) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    // Kontrolki mają własne gesty — suwak powiększenia przestawał się
     // przeciągać, bo blokada gasiła mu touchmove i zostawało samo klikanie.
-    if (event.target.closest?.("input, select, textarea, .avatar-stage, .push-switch")) {
+    if (event.target.closest?.("input, select, textarea, .push-switch")) {
       return;
     }
     const wPrzewijalnym = event.target.closest?.(".modal, .notification-panel, .shopping-add-list, .push-diag");
