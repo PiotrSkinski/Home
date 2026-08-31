@@ -65,6 +65,13 @@ async function runReminderJob(env) {
   }
 }
 
+// Przełączniki powiadomień ustawiane w aplikacji (user.pushPrefs).
+// Brak zapisu = włączone, żeby nowy rodzaj nie milczał po cichu.
+function chcePowiadomienie(state, userId, kind) {
+  const user = (state.users || []).find((u) => u.id === userId);
+  return user?.pushPrefs?.[kind] !== false;
+}
+
 function taskAssignees(task) {
   if (Array.isArray(task.assigneeIds) && task.assigneeIds.length) {
     return task.assigneeIds;
@@ -115,6 +122,9 @@ async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
       parts.push(`Zaległe (${overdue.length}):\n${formatTaskList(overdue)}`);
     }
 
+    if (!chcePowiadomienie(state, user.id, "daily")) {
+      continue;
+    }
     await pushToUser(env, householdId, user.id, {
       kind: "daily",
       dedupeKey: `${householdId}:${user.id}:daily:${localNow.date}`,
@@ -141,6 +151,11 @@ async function sendTaskReminders(env, householdId, state, openTasks, localNow) {
       if (isUserAbsent(state, assigneeId, localNow.date)) {
         continue;
       }
+      // Zadanie po terminie to „zaległe", nie „na godzinę" — osobny przełącznik.
+      const rodzaj = task.dueDate < localNow.date ? "overdue" : "taskTime";
+      if (!chcePowiadomienie(state, assigneeId, rodzaj)) {
+        continue;
+      }
       await pushToUser(env, householdId, assigneeId, {
         kind: "task",
         dedupeKey: `${householdId}:${assigneeId}:task:${task.id}:${localNow.date}:${task.reminderTime}`,
@@ -164,6 +179,9 @@ async function sendEveningReminder(env, householdId, state, openTasks, localNow)
       continue;
     }
 
+    if (!chcePowiadomienie(state, user.id, "evening")) {
+      continue;
+    }
     await pushToUser(env, householdId, user.id, {
       kind: "evening",
       dedupeKey: `${householdId}:${user.id}:evening:${localNow.date}`,
@@ -189,6 +207,13 @@ async function sendHouseholdNotices(env, householdId, state) {
 
     const createdAt = Date.parse(notice.createdAt || "");
     if (!Number.isFinite(createdAt) || createdAt < cutoff) {
+      continue;
+    }
+
+    // Klient już uwzględnia przełączniki przy ustawianiu flagi push, ale
+    // preferencja mogła się zmienić po utworzeniu powiadomienia.
+    const rodzaj = notice.kind === "reward" || notice.kind === "bonus" ? "rewards" : notice.kind;
+    if (rodzaj && !chcePowiadomienie(state, notice.recipientUserId, rodzaj)) {
       continue;
     }
 

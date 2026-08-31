@@ -28,6 +28,24 @@
   const SHOPPING_ITEM_POINTS = 0.5;
   const SHOPPING_DELIVERY_POINTS = 5;
   const COLORS = ["#6d28d9", "#db2777", "#2563eb", "#0d9488", "#ea580c", "#7c3aed"];
+  // Rodzaje powiadomień, każdy z własnym przełącznikiem. Klucze trafiają do
+  // user.pushPrefs i są sprawdzane zarówno w aplikacji, jak i w workerze.
+  const PUSH_KINDS = [
+    { id: "newTask", label: "Nowe zadanie", opis: "Gdy ktoś doda zadanie" },
+    { id: "taskTime", label: "Masz zadanie do wykonania", opis: "O ustawionej godzinie zadania" },
+    { id: "rewards", label: "Nagrody", opis: "Próg osiągnięty i premia domowa" },
+    { id: "daily", label: "Plan dnia", opis: "Rano o 08:00" },
+    { id: "overdue", label: "Zaległe zadania", opis: "Gdy termin minął" },
+    { id: "evening", label: "Podsumowanie wieczorne", opis: "O 22:00" }
+  ];
+
+  function getPushPref(userId, kind) {
+    const user = getUserById(userId);
+    const prefs = user?.pushPrefs;
+    // Brak zapisu = włączone. Nowy rodzaj nie może po cichu milczeć.
+    return prefs?.[kind] !== false;
+  }
+
   const DEFAULT_REWARD_THRESHOLDS = [
     { points: 200, label: "Nagroda" },
     { points: 350, label: "Duża nagroda" },
@@ -1626,6 +1644,30 @@
     sheetDrag = { sheet, x: t.clientX, y: t.clientY, dy: 0, aktywny: false };
   }
 
+  // Tło pod otwartym oknem nie może jechać za palcem. body { overflow: hidden }
+  // nie wystarcza na iOS, a blokada w handleSheetMove działała dopiero po
+  // rozpoznaniu gestu na samym arkuszu — dotknięcie tła omijało ją zupełnie.
+  function blokujRuchTla(event) {
+    if (!activeModal && !rewardCelebration && !notificationPanelOpen) {
+      return;
+    }
+    const wPrzewijalnym = event.target.closest?.(".modal, .notification-panel, .shopping-add-list, .push-diag");
+    if (!wPrzewijalnym) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      return;
+    }
+    // Wewnątrz okna pozwalamy przewijać, ale nie dalej niż jego własne krańce.
+    const naGorze = wPrzewijalnym.scrollTop <= 0;
+    const naDole = wPrzewijalnym.scrollTop + wPrzewijalnym.clientHeight >= wPrzewijalnym.scrollHeight - 1;
+    if (naGorze && naDole && event.cancelable) {
+      event.preventDefault();
+    }
+  }
+
+  document.addEventListener("touchmove", blokujRuchTla, { passive: false });
+
   function handleSheetMove(event) {
     if (!sheetDrag || event.touches.length !== 1) {
       return;
@@ -2215,16 +2257,9 @@
     `;
   }
 
-  // Panel istnieje po to, żeby dało się odczytać z telefonu, co naprawdę
-  // widzi przeglądarka — bez tego każda diagnoza pusha jest zgadywaniem.
   function renderPushPanel() {
     const s = pushStan;
-    const wiersz = (etykieta, wartosc, ok) => `
-      <div class="push-diag-row">
-        <span>${escapeHtml(etykieta)}</span>
-        <strong class="${ok === true ? "is-ok" : ok === false ? "is-bad" : ""}">${escapeHtml(String(wartosc))}</strong>
-      </div>
-    `;
+    const wlaczony = s?.zgoda === "granted" && s?.sub;
 
     return `
       <div class="modal-backdrop" role="presentation" data-action="close-modal">
@@ -2236,26 +2271,44 @@
             </h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
+
           ${
-            s
-              ? `<div class="push-diag">
-                  ${wiersz("Zgoda systemowa", s.zgoda, s.zgoda === "granted")}
-                  ${wiersz("Tryb aplikacji", s.standalone ? "z ekranu głównego" : "przeglądarka", s.standalone)}
-                  ${wiersz("Service worker", s.sw ? "działa" : "brak", s.sw)}
-                  ${wiersz("Subskrypcja", s.sub ? "jest" : "brak", Boolean(s.sub))}
-                  ${s.sub ? wiersz("Adres (końcówka)", s.sub, null) : ""}
-                  ${wiersz("Ostatni zapis", s.zapisano || "nigdy w tej sesji", Boolean(s.zapisano))}
-                  ${s.blad ? wiersz("Ostatni błąd", s.blad, false) : ""}
-                </div>`
-              : `<p class="form-hint">Sprawdzam…</p>`
+            wlaczony
+              ? `<p class="push-status is-on">Push włączony na tym urządzeniu.</p>`
+              : `<p class="push-status is-off">${
+                  s?.zgoda === "denied"
+                    ? "Powiadomienia zablokowane w ustawieniach iPhone'a — trzeba je tam odblokować."
+                    : "Push nie jest jeszcze włączony na tym urządzeniu."
+                }</p>`
           }
-          <p class="form-hint">
-            „Zarejestruj od nowa" wypisuje to urządzenie i zakłada subskrypcję ponownie.
-            Po udanym zapisie adres powinien się zmienić.
-          </p>
+
+          <div class="push-switches">
+            ${PUSH_KINDS.map((rodzaj) => {
+              const on = getPushPref(state.currentUserId, rodzaj.id);
+              return `
+                <label class="push-switch">
+                  <span class="push-switch-body">
+                    <strong>${escapeHtml(rodzaj.label)}</strong>
+                    <small>${escapeHtml(rodzaj.opis)}</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    data-action="push-pref"
+                    data-kind="${rodzaj.id}"
+                    ${on ? "checked" : ""}
+                    ${wlaczony ? "" : "disabled"}
+                  />
+                  <span class="push-switch-track" aria-hidden="true"><span class="push-switch-knob"></span></span>
+                </label>
+              `;
+            }).join("")}
+          </div>
+
           <div class="form-actions">
             <button class="ghost-button" type="button" data-action="settings-panel" data-panel="">Wróć</button>
-            <button class="button" type="button" data-action="request-notifications">Zarejestruj od nowa</button>
+            <button class="button" type="button" data-action="request-notifications">
+              ${wlaczony ? "Zarejestruj ponownie" : "Włącz powiadomienia push"}
+            </button>
           </div>
         </section>
       </div>
@@ -2265,19 +2318,14 @@
   async function odczytajStanPush() {
     const stan = {
       zgoda: typeof Notification === "undefined" ? "brak API" : Notification.permission,
-      standalone: window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true,
-      sw: false,
-      sub: null,
-      zapisano: pushDiag.zapisano,
-      blad: pushDiag.blad
+      sub: null
     };
     try {
       const reg = await navigator.serviceWorker?.getRegistration();
-      stan.sw = Boolean(reg);
       const sub = await reg?.pushManager?.getSubscription();
-      stan.sub = sub ? "…" + sub.endpoint.slice(-14) : null;
-    } catch (error) {
-      stan.blad = stan.blad || String(error?.message || error);
+      stan.sub = Boolean(sub);
+    } catch (_error) {
+      stan.sub = false;
     }
     pushStan = stan;
     render();
@@ -4157,6 +4205,17 @@
       return;
     }
 
+    if (action === "push-pref") {
+      const user = getCurrentUser();
+      const kind = actionElement.dataset.kind;
+      if (user && kind) {
+        user.pushPrefs = { ...(user.pushPrefs || {}), [kind]: actionElement.checked };
+        saveState();
+        render();
+      }
+      return;
+    }
+
     if (action === "settings-panel") {
       const cel = actionElement.dataset.panel || null;
       if (cel && PANELE_ADMINA.includes(cel) && !adminUnlocked) {
@@ -4500,6 +4559,19 @@
   }
 
   function handleChange(event) {
+    // Przełączniki powiadomień to checkboxy — klik nie wystarczy, dyspozytor
+    // akcji reaguje na click, a stan zmienia się dopiero przy change.
+    if (event.target.matches("[data-action='push-pref']")) {
+      const user = getCurrentUser();
+      const kind = event.target.dataset.kind;
+      if (user && kind) {
+        user.pushPrefs = { ...(user.pushPrefs || {}), [kind]: event.target.checked };
+        saveState();
+        render();
+      }
+      return;
+    }
+
     if (event.target.matches("[data-action='shopping-item-bought']")) {
       updateShoppingItemStatus(
         event.target.dataset.taskId,
@@ -4961,18 +5033,22 @@
     return Math.max(0, MONTHLY_POSTPONE_LIMIT - getUsedPostponeCount(userId));
   }
 
-  function notifyUsers(userIds, { title, body, taskId = null, push = false }) {
+  function notifyUsers(userIds, { title, body, taskId = null, push = false, kind = null }) {
     Array.from(new Set(userIds))
       .filter((id) => id && getUserById(id))
       .forEach((id) => {
+        // Powiadomienie w aplikacji zostaje zawsze; wyłączony przełącznik
+        // gasi wyłącznie wysyłkę na telefon.
+        const pushDlaNiego = push && (!kind || getPushPref(id, kind));
         state.notifications.unshift({
           id: uid("notification"),
           taskId,
           title,
           body,
+          kind,
           recipientUserId: id,
           read: false,
-          push,
+          push: pushDlaNiego,
           createdAt: new Date().toISOString()
         });
       });
@@ -5598,7 +5674,7 @@
     // nowe zadanie, a na telefon nie przychodziło nic.
     notifyUsers(
       state.users.map((user) => user.id).filter((id) => id !== state.currentUserId),
-      { title, body, taskId: task.id, push: true }
+      { title, body, taskId: task.id, push: true, kind: "newTask" }
     );
   }
 
@@ -6183,7 +6259,7 @@
           id: uid("notification"),
           taskId: null,
           kind: "bonus",
-          push: true,
+          push: getPushPref(user.id, "rewards"),
           title: "Premia domowa włączona",
           body: `Cały dom przekroczył ${MONTHLY_GOAL} pkt. Od teraz punkty ponad ${MONTHLY_GOAL} liczą się podwójnie.`,
           recipientUserId: user.id,
@@ -6375,7 +6451,7 @@
           id: uid("notification"),
           taskId: task.id,
           kind: "reward",
-          push: true,
+          push: getPushPref(rewardAssignee.id, "rewards"),
           rewardUserName: user.name,
           rewardThreshold: threshold.points,
           title: "Nagroda do przyznania",
