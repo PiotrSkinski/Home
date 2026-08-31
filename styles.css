@@ -4376,16 +4376,7 @@ body.is-modal-open {
   animation: none;
 }
 
-/* Fioletowa szarfa zamiast pomarańczowej ramki */
-.request-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
-  background: linear-gradient(180deg, var(--accent) 0%, #db2777 100%);
-}
-
+/* Szarfy przy krawędzi nie ma — świecąca ramka wystarczy za wyróżnik. */
 .request-card {
   position: relative;
   overflow: hidden;
