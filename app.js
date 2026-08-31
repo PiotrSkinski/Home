@@ -4141,11 +4141,11 @@
                     .join("")}
                 </select>
               </label>
-              <label class="wide status-line">
+              <label class="wide status-line tylko-cykliczne" ${values.recurrenceType === "none" ? "hidden" : ""}>
                 <input type="checkbox" name="rotate" ${values.rotate ? "checked" : ""} />
                 <span>Rotacja między domownikami przy kolejnych cyklach</span>
               </label>
-              <label class="wide">
+              <label class="wide tylko-cykliczne" ${values.recurrenceType === "none" ? "hidden" : ""}>
                 <span class="label">Pomiń w te dni</span>
                 <div class="weekday-picker">
                   ${WEEKDAY_LABELS.map(
@@ -4910,6 +4910,20 @@
   function handleChange(event) {
     // Przełączniki powiadomień to checkboxy — klik nie wystarczy, dyspozytor
     // akcji reaguje na click, a stan zmienia się dopiero przy change.
+    // Zadanie jednorazowe nie ma czego rotować ani pomijać. Chowamy te pola
+    // wprost w DOM, bez render() — przerysowanie formularza kasowałoby to,
+    // co użytkownik zdążył już wpisać.
+    if (event.target.matches("[name='recurrenceType']")) {
+      const cykliczne = event.target.value !== "none";
+      event.target
+        .closest("form")
+        ?.querySelectorAll(".tylko-cykliczne")
+        .forEach((pole) => {
+          pole.hidden = !cykliczne;
+        });
+      return;
+    }
+
     if (event.target.matches("[data-action='avatar-plik']")) {
       wczytajZdjecieAwatara(event.target.files?.[0]);
       return;
@@ -5176,8 +5190,11 @@
         editingTask.priority = priority;
         editingTask.recurrence = {
           type: RECURRENCE[recurrenceType] ? recurrenceType : "none",
-          rotate: data.has("rotate"),
-          skipWeekdays
+          // Zadanie jednorazowe nie rotuje i nie pomija dni. Pola są wtedy
+          // ukryte, ale zaznaczenie z wcześniejszego wyboru zostawało
+          // w formularzu i trafiało do zapisu.
+          rotate: recurrenceType !== "none" && data.has("rotate"),
+          skipWeekdays: recurrenceType === "none" ? [] : skipWeekdays
         };
         editingTask.shoppingItems = shoppingItems;
         editingTask.points = getTaskPotentialPoints(editingTask);
@@ -5215,8 +5232,11 @@
         skippedById: null,
         recurrence: {
           type: recurrenceType,
-          rotate: data.has("rotate"),
-          skipWeekdays
+          // Zadanie jednorazowe nie rotuje i nie pomija dni. Pola są wtedy
+          // ukryte, ale zaznaczenie z wcześniejszego wyboru zostawało
+          // w formularzu i trafiało do zapisu.
+          rotate: recurrenceType !== "none" && data.has("rotate"),
+          skipWeekdays: recurrenceType === "none" ? [] : skipWeekdays
         },
         points: isShopping ? getShoppingPotentialPoints(shoppingItems) : PRIORITY[priority].points,
         shoppingItems,

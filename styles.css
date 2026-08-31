@@ -4584,3 +4584,10 @@ body.is-modal-open {
   touch-action: pan-x;
   height: 34px;
 }
+
+/* Ukryte pola formularza muszą zniknąć także wtedy, gdy etykieta ma
+   własny display z siatki — inaczej atrybut hidden nie działa. */
+.form-grid label[hidden],
+[hidden] {
+  display: none !important;
+}
