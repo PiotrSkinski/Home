@@ -22,6 +22,15 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "Brakuje subskrypcji push." }, 400);
   }
 
+  // Świeża subskrypcja z tego samego urządzenia zastępuje poprzednią. Bez
+  // tego po ponownym zainstalowaniu aplikacji w bazie zostawał martwy adres,
+  // do którego usługa push nadal przyjmowała wysyłki — wyglądały na udane,
+  // a nie docierały nigdzie.
+  const poprzedni = String(body?.previousEndpoint || "");
+  if (poprzedni && poprzedni !== subscription.endpoint) {
+    await db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?1").bind(poprzedni).run();
+  }
+
   const now = new Date().toISOString();
   const id = `sub_${await sha256(subscription.endpoint)}`;
   const userAgent = request.headers.get("user-agent") || "";

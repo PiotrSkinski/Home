@@ -5410,17 +5410,28 @@
         return;
       }
 
+      // Zawsze zakładamy subskrypcję OD NOWA. Po ponownym zainstalowaniu
+      // aplikacji getSubscription() potrafi zwrócić obiekt, którego iOS już
+      // nie honoruje: zapis nadpisywał wtedy ten sam martwy adres i nic się
+      // nie zmieniało. Wypisanie się i ponowny zapis daje nowy endpoint.
       const existingSubscription = await registration.pushManager.getSubscription();
-      const subscription =
-        existingSubscription ||
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-        }));
+      const poprzedniEndpoint = existingSubscription?.endpoint || null;
+      if (existingSubscription) {
+        try {
+          await existingSubscription.unsubscribe();
+        } catch (_error) {
+          // Trudno — spróbujemy zapisać to, co uda się utworzyć.
+        }
+      }
 
-      await savePushSubscription(subscription);
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+
+      await savePushSubscription(subscription, poprzedniEndpoint);
       localStorage.setItem(WEB_PUSH_ENABLED_KEY, "true");
-      toast("Powiadomienia push włączone", "Dostaniesz plan dnia o 08:00 i przypomnienia o godzinie zadania.");
+      toast("Powiadomienia push włączone", "Zarejestrowano to urządzenie od nowa. Plan dnia o 08:00 i przypomnienia o godzinie zadania.");
     } catch (error) {
       console.warn("Nie udało się włączyć Web Push", error);
       localStorage.removeItem(WEB_PUSH_ENABLED_KEY);
@@ -5465,7 +5476,7 @@
     }
   }
 
-  async function savePushSubscription(subscription) {
+  async function savePushSubscription(subscription, previousEndpoint = null) {
     const response = await fetch(API_PUSH_SUBSCRIPTION_ENDPOINT, {
       method: "POST",
       headers: {
@@ -5473,7 +5484,7 @@
         accept: "application/json",
         ...getAuthHeaders()
       },
-      body: JSON.stringify({ subscription: subscription.toJSON() })
+      body: JSON.stringify({ subscription: subscription.toJSON(), previousEndpoint })
     });
 
     if (!response.ok) {
