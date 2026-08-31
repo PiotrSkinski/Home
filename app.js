@@ -187,6 +187,41 @@
 
   document.addEventListener("click", handleClick);
   document.addEventListener("change", handleChange);
+  // Suwak i przeciąganie kadru omijają render(): przerysowanie widoku
+  // gubiłoby canvas w trakcie gestu.
+  document.addEventListener("input", (event) => {
+    if (event.target.matches("[data-action='avatar-zoom']") && avatarKadr) {
+      avatarKadr.skala = Number(event.target.value) / 100;
+      ograniczKadr();
+      rysujKadr();
+    }
+  });
+
+  (() => {
+    let ciagniecie = null;
+    const punkt = (e) => (e.touches ? e.touches[0] : e);
+    document.addEventListener("pointerdown", (event) => {
+      if (!avatarKadr || !event.target.closest(".avatar-canvas")) {
+        return;
+      }
+      ciagniecie = { x: event.clientX, y: event.clientY, x0: avatarKadr.x, y0: avatarKadr.y };
+      event.target.setPointerCapture?.(event.pointerId);
+    });
+    document.addEventListener("pointermove", (event) => {
+      if (!ciagniecie || !avatarKadr) {
+        return;
+      }
+      const skalaPodgladu = AVATAR_SIZE / (document.querySelector(".avatar-canvas")?.clientWidth || AVATAR_SIZE);
+      avatarKadr.x = ciagniecie.x0 + (event.clientX - ciagniecie.x) * skalaPodgladu;
+      avatarKadr.y = ciagniecie.y0 + (event.clientY - ciagniecie.y) * skalaPodgladu;
+      ograniczKadr();
+      rysujKadr();
+    });
+    const koniec = () => { ciagniecie = null; };
+    document.addEventListener("pointerup", koniec);
+    document.addEventListener("pointercancel", koniec);
+  })();
+
   document.addEventListener("input", handleInput);
   document.addEventListener("submit", handleSubmit);
   document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -360,6 +395,12 @@
         name: user.name || "Domownik",
         color: user.color || COLORS[0],
         avatar: user.avatar || (user.name || "D").slice(0, 1).toUpperCase(),
+        // Te trzy pola przepadały przy każdym wczytaniu stanu: normalizacja
+        // budowała użytkownika od zera i nie znała nowszych pól. Przełączniki
+        // powiadomień wracały więc do domyślnych po odświeżeniu aplikacji.
+        photo: typeof user.photo === "string" && user.photo.startsWith("data:image/") ? user.photo : null,
+        pushPrefs: user.pushPrefs && typeof user.pushPrefs === "object" ? user.pushPrefs : {},
+        pushTimes: user.pushTimes && typeof user.pushTimes === "object" ? user.pushTimes : {},
         pin: normalizePin(user.pin),
         absence: normalizeDateRange(user.absence)
       };
@@ -2205,6 +2246,9 @@
     if (settingsPanel === "push") {
       return renderPushPanel();
     }
+    if (settingsPanel === "awatar") {
+      return renderAvatarPanel();
+    }
     if (settingsPanel === "dzien") {
       return renderDayLengthPanel();
     }
@@ -2237,6 +2281,14 @@
               </span>
               <span class="settings-tile-arrow" aria-hidden="true">›</span>
             </button>
+            <button class="settings-tile" type="button" data-action="settings-panel" data-panel="awatar">
+              <span class="settings-tile-icon" aria-hidden="true">🙂</span>
+              <span class="settings-tile-body">
+                <strong>Mój awatar</strong>
+                <small>${getCurrentUser()?.photo ? "Własne zdjęcie" : "Inicjał i kolor"}</small>
+              </span>
+              <span class="settings-tile-arrow" aria-hidden="true">›</span>
+            </button>
             <button class="settings-tile" type="button" data-action="settings-panel" data-panel="push">
               <span class="settings-tile-icon" aria-hidden="true">🔔</span>
               <span class="settings-tile-body">
@@ -2265,6 +2317,137 @@
         </section>
       </div>
     `;
+  }
+
+  const AVATAR_SIZE = 192;
+  let avatarKadr = null;
+
+  function renderAvatarPanel() {
+    const user = getCurrentUser();
+    const maZdjecie = Boolean(user?.photo);
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="avatar-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="avatar-title">
+              <button class="icon-button" type="button" data-action="settings-panel" data-panel="" aria-label="Wróć">‹</button>
+              Mój awatar
+            </h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+
+          ${
+            avatarKadr
+              ? `<div class="avatar-crop">
+                  <div class="avatar-stage">
+                    <canvas class="avatar-canvas" width="${AVATAR_SIZE}" height="${AVATAR_SIZE}"></canvas>
+                    <span class="avatar-ring" aria-hidden="true"></span>
+                  </div>
+                  <label class="avatar-zoom">
+                    <span class="label">Powiększenie</span>
+                    <input type="range" min="100" max="300" value="${Math.round(avatarKadr.skala * 100)}" data-action="avatar-zoom" />
+                  </label>
+                  <p class="form-hint">Przeciągnij zdjęcie palcem, żeby ustawić kadr. Zapisany zostanie fragment w kółku.</p>
+                  <div class="form-actions">
+                    <button class="ghost-button" type="button" data-action="avatar-anuluj">Anuluj</button>
+                    <button class="button" type="button" data-action="avatar-zapisz">Zapisz awatar</button>
+                  </div>
+                </div>`
+              : `<div class="avatar-current">
+                  ${avatar(user, "xl")}
+                  <p class="form-hint">
+                    ${
+                      maZdjecie
+                        ? "Twoje zdjęcie jest przycięte do kółka. Możesz je zmienić albo wrócić do inicjału."
+                        : "Teraz masz inicjał na kolorowym tle. Dodaj zdjęcie, żeby ustawić własny awatar."
+                    }
+                  </p>
+                  <label class="button avatar-pick">
+                    <span>${maZdjecie ? "Zmień zdjęcie" : "Wybierz zdjęcie"}</span>
+                    <input type="file" accept="image/*" data-action="avatar-plik" />
+                  </label>
+                  ${
+                    maZdjecie
+                      ? `<button class="ghost-button" type="button" data-action="avatar-usun">Wróć do inicjału</button>`
+                      : ""
+                  }
+                </div>`
+          }
+        </section>
+      </div>
+    `;
+  }
+
+  // Kadrowanie rysujemy na canvasie: obraz przesuwany palcem, suwak skaluje,
+  // a zapisujemy dokładnie ten kwadrat, który widać w kółku.
+  function rysujKadr() {
+    const canvas = document.querySelector(".avatar-canvas");
+    if (!canvas || !avatarKadr?.img) {
+      return;
+    }
+    const ctx = canvas.getContext("2d");
+    const { img, skala, x, y } = avatarKadr;
+    const bazowa = AVATAR_SIZE / Math.min(img.width, img.height);
+    const w = img.width * bazowa * skala;
+    const h = img.height * bazowa * skala;
+
+    ctx.clearRect(0, 0, AVATAR_SIZE, AVATAR_SIZE);
+    ctx.fillStyle = "#f3eefc";
+    ctx.fillRect(0, 0, AVATAR_SIZE, AVATAR_SIZE);
+    ctx.drawImage(img, x, y, w, h);
+  }
+
+  function ograniczKadr() {
+    const { img, skala } = avatarKadr;
+    const bazowa = AVATAR_SIZE / Math.min(img.width, img.height);
+    const w = img.width * bazowa * skala;
+    const h = img.height * bazowa * skala;
+    // Zdjęcie nie może odsłonić tła — trzymamy je zawsze na całym kwadracie.
+    avatarKadr.x = Math.min(0, Math.max(AVATAR_SIZE - w, avatarKadr.x));
+    avatarKadr.y = Math.min(0, Math.max(AVATAR_SIZE - h, avatarKadr.y));
+  }
+
+  function wczytajZdjecieAwatara(plik) {
+    if (!plik) {
+      return;
+    }
+    if (!/^image\//.test(plik.type)) {
+      toast("To nie jest zdjęcie", "Wybierz plik graficzny.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        avatarKadr = { img, skala: 1, x: 0, y: 0 };
+        const bazowa = AVATAR_SIZE / Math.min(img.width, img.height);
+        avatarKadr.x = (AVATAR_SIZE - img.width * bazowa) / 2;
+        avatarKadr.y = (AVATAR_SIZE - img.height * bazowa) / 2;
+        render();
+        queueMicrotask(rysujKadr);
+      };
+      img.onerror = () => toast("Nie udało się otworzyć zdjęcia", "Spróbuj z innym plikiem.");
+      img.src = String(reader.result || "");
+    };
+    reader.onerror = () => toast("Nie udało się wczytać pliku", "Spróbuj jeszcze raz.");
+    reader.readAsDataURL(plik);
+  }
+
+  function zapiszAwatar() {
+    const canvas = document.querySelector(".avatar-canvas");
+    const user = getCurrentUser();
+    if (!canvas || !user) {
+      return;
+    }
+    // JPEG, nie PNG: cały stan domu leci do bazy jako JSON, więc rozmiar ma
+    // znaczenie. 192 px w jakości 0.82 to około 10 kB.
+    user.photo = canvas.toDataURL("image/jpeg", 0.82);
+    avatarKadr = null;
+    settingsPanel = null;
+    saveState();
+    render();
+    toast("Awatar zapisany", "Twoje zdjęcie widać teraz w całej aplikacji.");
   }
 
   function renderPushPanel() {
@@ -3325,16 +3508,11 @@
           ${renderAbsenceWarning(task)}
         </div>
         <div class="task-actions">
-          ${
-            !isAssignee(task, state.currentUserId) && !closed
-              ? `<button class="quick-button" type="button" data-action="assign-me" data-task-id="${task.id}" aria-label="Przepisz na mnie">↙</button>`
-              : ""
-          }
-          <button class="quick-button ${shopping ? "shopping-expand-button" : ""}" type="button" data-action="select-task" data-task-id="${
-            task.id
-          }" aria-label="${shopping ? "Rozwiń listę zakupów" : "Szczegóły"}">${
-            shopping ? "Rozwiń listę zakupów" : "›"
-          }</button>
+          <button class="quick-button expand-button ${
+            shopping ? "shopping-expand-button" : ""
+          }" type="button" data-action="select-task" data-task-id="${task.id}" aria-label="${
+            shopping ? "Rozwiń listę zakupów" : "Rozwiń zadanie"
+          }">${shopping ? "Rozwiń listę zakupów" : "Rozwiń"}</button>
         </div>
       </article>
       </div>
@@ -4281,6 +4459,28 @@
       return;
     }
 
+    if (action === "avatar-usun") {
+      const user = getCurrentUser();
+      if (user) {
+        delete user.photo;
+        saveState();
+        render();
+        toast("Wrócono do inicjału", "Zdjęcie zostało usunięte.");
+      }
+      return;
+    }
+
+    if (action === "avatar-anuluj") {
+      avatarKadr = null;
+      render();
+      return;
+    }
+
+    if (action === "avatar-zapisz") {
+      zapiszAwatar();
+      return;
+    }
+
     if (action === "push-pref") {
       const user = getCurrentUser();
       const kind = actionElement.dataset.kind;
@@ -4659,6 +4859,11 @@
   function handleChange(event) {
     // Przełączniki powiadomień to checkboxy — klik nie wystarczy, dyspozytor
     // akcji reaguje na click, a stan zmienia się dopiero przy change.
+    if (event.target.matches("[data-action='avatar-plik']")) {
+      wczytajZdjecieAwatara(event.target.files?.[0]);
+      return;
+    }
+
     if (event.target.matches("[data-action='push-time']")) {
       const user = getCurrentUser();
       const kind = event.target.dataset.kind;
@@ -5574,6 +5779,28 @@
 
     const previousIds = getAssigneeIds(task);
     if (previousIds.length === nextIds.length && previousIds.every((id) => nextIds.includes(id))) {
+      render();
+      return;
+    }
+
+    // Bramka siedzi tutaj, a nie przy przyciskach: zabranie zadania obecnemu
+    // domownikowi zawsze wymaga jego zgody, niezależnie od tego, z którego
+    // miejsca w aplikacji ktoś tego próbuje.
+    const zabieramObecnemu =
+      !opcje.przejmujacyId &&
+      nextIds.includes(state.currentUserId) &&
+      previousIds.some((id) => id !== state.currentUserId && !isUserAbsentNow(id));
+
+    if (zabieramObecnemu) {
+      if (getPendingRequestForTask(task.id)) {
+        toast("Wniosek już czeka", "Do tego zadania trwa już inna sprawa.");
+      } else {
+        requestTaskId = task.id;
+        requestKind = "takeover";
+        activeModal = "request";
+        queueMicrotask(() => document.querySelector("[name='requestReason']")?.focus());
+      }
+      selectedTaskId = task.id;
       render();
       return;
     }
@@ -6988,6 +7215,11 @@
 
   function avatar(user, size = "") {
     const safeUser = user || state.users[0];
+    if (safeUser.photo) {
+      return `<span class="avatar ${size} has-photo" style="background-image:url('${escapeAttribute(
+        safeUser.photo
+      )}')" role="img" aria-label="${escapeAttribute(safeUser.name)}"></span>`;
+    }
     return `<span class="avatar ${size}" style="background:${safeUser.color}">${escapeHtml(safeUser.avatar || safeUser.name.slice(0, 1))}</span>`;
   }
 

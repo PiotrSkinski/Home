@@ -4361,3 +4361,181 @@ body.is-modal-open {
 .push-time.is-off {
   opacity: 0.45;
 }
+
+/* ===================== Wniosek i głosowanie: zgodnie z resztą aplikacji ===================== */
+/* Poprzednio karta miała pomarańczową obwódkę i wąski, ciasny układ —
+   odstawała od szklanego, fioletowego reszty widoku. */
+.request-card {
+  padding: 18px 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-2);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-md), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  animation: none;
+}
+
+/* Fioletowa szarfa zamiast pomarańczowej ramki */
+.request-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: linear-gradient(180deg, var(--accent) 0%, #db2777 100%);
+}
+
+.request-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.request-card .section-head {
+  margin-bottom: 12px;
+}
+
+.request-card .section-head h2 {
+  font-size: 1.05rem;
+}
+
+.request-lead {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
+.request-reason {
+  margin: 0 0 14px;
+  padding: 11px 13px;
+  border-left: 3px solid rgba(109, 40, 217, 0.35);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.request-tally {
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.request-card .split-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.request-card .split-actions .button,
+.request-card .split-actions .danger-button,
+.request-card .split-actions .ghost-button {
+  width: 100%;
+  min-height: 46px;
+}
+
+.request-card .form-hint {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.5);
+  text-align: center;
+}
+
+@media (min-width: 560px) {
+  .request-card .split-actions {
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+  }
+}
+
+/* ===================== Awatar ze zdjęciem ===================== */
+.avatar.has-photo {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: transparent;
+}
+
+.avatar.xl {
+  width: 96px;
+  height: 96px;
+  font-size: 2.1rem;
+}
+
+.avatar-current {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+/* Pole pliku ukryte — klikalny jest cały przycisk */
+.avatar-pick {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.avatar-pick input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.avatar-crop {
+  display: grid;
+  gap: 14px;
+}
+
+.avatar-stage {
+  position: relative;
+  width: min(240px, 72vw);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(46, 36, 64, 0.22);
+  touch-action: none;
+}
+
+.avatar-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.avatar-canvas:active {
+  cursor: grabbing;
+}
+
+/* Biała obwódka koła — taka sama jak przy awatarach w aplikacji */
+.avatar-ring {
+  position: absolute;
+  inset: 0;
+  border: 3px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.avatar-zoom {
+  display: grid;
+  gap: 6px;
+}
+
+.avatar-zoom input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* Pigułki nie mają się rozciągać na całą szerokość w wąskich nagłówkach */
+.section-head .pill,
+.detail-card > .pill {
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+}
