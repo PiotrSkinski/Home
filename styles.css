@@ -4029,7 +4029,7 @@ body.is-modal-open {
 .brand-dust {
   position: absolute;
   bottom: 6px;
-  left: 7px;
+  right: 8px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
@@ -4047,19 +4047,21 @@ body.is-modal-open {
     animation: miotla-kurz 3.6s ease-in-out infinite;
   }
 
-  /* Zamach w prawo, powrót, i tak w kółko */
+  /* Klasyczny zamach: miotła idzie po podłodze w PRAWO, potem wraca */
   @keyframes miotla-zamiata {
-    0%, 12%   { transform: rotate(14deg) translateX(2px); }
-    32%       { transform: rotate(-16deg) translateX(-3px); }
-    52%, 100% { transform: rotate(14deg) translateX(2px); }
+    0%, 10%  { transform: rotate(-20deg) translateX(-4px); }
+    38%      { transform: rotate(12deg) translateX(5px); }
+    50%      { transform: rotate(16deg) translateX(6px); }
+    72%      { transform: rotate(-20deg) translateX(-4px); }
+    100%     { transform: rotate(-20deg) translateX(-4px); }
   }
 
-  /* Kurz pojawia się dopiero na końcu ruchu i odpływa w lewo */
+  /* Kurz zbiera się na końcu zamachu i odpływa w prawo */
   @keyframes miotla-kurz {
-    0%, 26%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
-    36%      { opacity: 0.9; transform: translate(-2px, -1px) scale(1); }
-    56%      { opacity: 0; transform: translate(-8px, -4px) scale(1.5); }
-    100%     { opacity: 0; transform: translate(-8px, -4px) scale(1.5); }
+    0%, 30%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
+    42%      { opacity: 0.9; transform: translate(3px, -1px) scale(1); }
+    62%      { opacity: 0; transform: translate(10px, -4px) scale(1.6); }
+    100%     { opacity: 0; transform: translate(10px, -4px) scale(1.6); }
   }
 }
 
@@ -4107,4 +4109,48 @@ body.is-modal-open {
 .leader-row .reward-axis {
   grid-column: 1 / -1;
   margin-top: 0;
+}
+
+/* ===================== Uchwyt arkusza ===================== */
+/* Uchwyt jest teraz prawdziwym elementem (wstawianym po renderze), więc
+   ::before z poprzedniej wersji musi zniknąć, żeby nie było dwóch pasków. */
+@media (max-width: 720px) {
+  .modal::before {
+    content: none;
+  }
+
+  .sheet-handle {
+    display: block;
+    width: 100%;
+    padding: 10px 0 12px;
+    margin: -6px 0 6px;
+    background: none;
+    /* Cały gest na uchwycie należy do arkusza, nie do przeglądarki. */
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .sheet-handle::after {
+    content: "";
+    display: block;
+    width: 42px;
+    height: 5px;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: rgba(84, 72, 98, 0.32);
+  }
+
+  .sheet-handle:active {
+    cursor: grabbing;
+  }
+
+  .sheet-handle:active::after {
+    background: rgba(84, 72, 98, 0.5);
+  }
+}
+
+@media (min-width: 721px) {
+  .sheet-handle {
+    display: none;
+  }
 }

@@ -148,6 +148,7 @@
   let lastRemoteUpdatedAt = loadLastSyncedUpdatedAt();
 
   registerServiceWorker();
+  odswiezSubskrypcjePush();
   recomputeDerived();
   persistLocalState(state);
   render();
@@ -1224,6 +1225,7 @@
     `;
 
     ustawBlokadePrzewijania(Boolean(activeModal) || notificationPanelOpen);
+    dodajUchwytyArkuszy();
     growProgressBars();
     animateCounters();
   }
@@ -1233,6 +1235,16 @@
   // Wcześniej było tu position: fixed, ale to gubi pozycję przewijania i
   // gryzie się z klawiaturą iOS — po dotknięciu pola okno przestawało się
   // przewijać.
+  // Pasek na górze arkusza musi być prawdziwym elementem, żeby dało się go
+  // złapać palcem — jako ::before był tylko rysunkiem.
+  function dodajUchwytyArkuszy() {
+    document.querySelectorAll(".modal").forEach((sheet) => {
+      if (!sheet.querySelector(":scope > .sheet-handle")) {
+        sheet.insertAdjacentHTML("afterbegin", '<span class="sheet-handle" aria-hidden="true"></span>');
+      }
+    });
+  }
+
   function ustawBlokadePrzewijania(zablokuj) {
     document.body.classList.toggle("is-modal-open", zablokuj);
   }
@@ -1629,8 +1641,15 @@
       }
       sheetDrag.aktywny = true;
       sheetDrag.sheet.style.transition = "none";
+      // Animacja wejścia ma fill-mode: both, więc jej końcowy transform
+      // wygrywa w kaskadzie ze stylem inline i arkusz nie ruszałby się
+      // za palcem. Na czas gestu ją zdejmujemy.
+      sheetDrag.sheet.style.animation = "none";
     }
 
+    if (event.cancelable) {
+      event.preventDefault();
+    }
     sheetDrag.dy = Math.max(0, dy);
     sheetDrag.sheet.style.transform = `translateY(${sheetDrag.dy}px)`;
   }
@@ -1645,14 +1664,26 @@
       return;
     }
     sheet.style.transition = "";
-    sheet.style.transform = "";
-    if (dy >= SHEET_CLOSE_DISTANCE) {
-      zamknijAktywneOkno();
+    if (dy < SHEET_CLOSE_DISTANCE) {
+      sheet.style.transform = "";
+      sheet.style.animation = "";
+      return;
     }
+    // Arkusz zjeżdża do końca, dopiero potem znika — bez tego okno
+    // przepadało w jednej klatce.
+    sheet.style.transform = `translateY(${Math.max(sheet.offsetHeight, dy)}px)`;
+    const zamknij = () => {
+      sheet.removeEventListener("transitionend", zamknij);
+      zamknijAktywneOkno();
+    };
+    sheet.addEventListener("transitionend", zamknij);
+    window.setTimeout(zamknij, 320);
   }
 
+  // touchmove NIE może być pasywny: dopóki nie zablokujemy zdarzenia, przy
+  // ciągnięciu arkusza przeglądarka przewija to, co jest pod spodem.
   document.addEventListener("touchstart", handleSheetStart, { passive: true });
-  document.addEventListener("touchmove", handleSheetMove, { passive: true });
+  document.addEventListener("touchmove", handleSheetMove, { passive: false });
   document.addEventListener("touchend", handleSheetEnd, { passive: true });
   document.addEventListener("touchcancel", handleSheetEnd, { passive: true });
 
@@ -5303,6 +5334,36 @@
     }
 
     render();
+  }
+
+  // iOS potrafi unieważnić subskrypcję bez pytania. Wcześniej adres trafiał
+  // na serwer wyłącznie przy ręcznym włączeniu powiadomień, więc po rotacji
+  // worker wysyłał w pustkę: usługa push przyjmowała żądanie (sent_at bez
+  // błędu), a telefon nie dostawał nic. Teraz przy każdym starcie
+  // przypominamy serwerowi aktualny adres.
+  async function odswiezSubskrypcjePush() {
+    if (localStorage.getItem(WEB_PUSH_ENABLED_KEY) !== "true") {
+      return;
+    }
+    try {
+      if (!("serviceWorker" in navigator) || Notification.permission !== "granted") {
+        return;
+      }
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager?.getSubscription();
+      if (subscription) {
+        await savePushSubscription(subscription);
+        return;
+      }
+      // Subskrypcja zniknęła — zakładamy ją od nowa.
+      const swieza = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+      await savePushSubscription(swieza);
+    } catch (error) {
+      console.warn("Nie udało się odświeżyć subskrypcji push", error);
+    }
   }
 
   async function savePushSubscription(subscription) {

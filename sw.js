@@ -1,14 +1,14 @@
-const CACHE_NAME = "homejob-v60";
+const CACHE_NAME = "homejob-v62";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=60",
-  "./app.js?v=60",
-  "./manifest.webmanifest?v=60",
+  "./styles.css?v=62",
+  "./app.js?v=62",
+  "./manifest.webmanifest?v=62",
   "./icon.svg",
-  "./icon-180.png?v=60",
-  "./icon-192.png?v=60",
-  "./icon-512.png?v=60"
+  "./icon-180.png?v=62",
+  "./icon-192.png?v=62",
+  "./icon-512.png?v=62"
 ];
 
 self.addEventListener("install", (event) => {
@@ -56,6 +56,34 @@ self.addEventListener("push", (event) => {
   event.waitUntil(showPushNotifications());
 });
 
+// iOS potrafi unieważnić subskrypcję sam z siebie. Bez tego serwer trzymał
+// martwy adres i wysyłał w pustkę — usługa push przyjmowała żądanie, a telefon
+// nie dostawał niczego.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(odnowSubskrypcje(event));
+});
+
+async function odnowSubskrypcje(event) {
+  try {
+    const stara = event.oldSubscription || (await self.registration.pushManager.getSubscription());
+    const klucz = event.newSubscription?.options?.applicationServerKey || stara?.options?.applicationServerKey;
+    const nowa =
+      event.newSubscription ||
+      (await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: klucz
+      }));
+
+    await fetch(new URL("./api/push-subscription", self.registration.scope), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subscription: nowa.toJSON(), previousEndpoint: stara?.endpoint || null })
+    });
+  } catch (error) {
+    // Nic więcej nie zrobimy — aplikacja odświeży subskrypcję przy starcie.
+  }
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = new URL(event.notification.data?.url || "./index.html", self.registration.scope).href;
@@ -81,8 +109,8 @@ async function showPushNotifications() {
     await self.registration.showNotification("HomeJob", {
       body: "Masz zadania do sprawdzenia.",
       tag: "homejob-fallback",
-      icon: "./icon-192.png?v=60",
-      badge: "./icon-192.png?v=60",
+      icon: "./icon-192.png?v=62",
+      badge: "./icon-192.png?v=62",
       data: { url: "./index.html" }
     });
     return;
@@ -93,8 +121,8 @@ async function showPushNotifications() {
       body: message.body || "Masz zadania do sprawdzenia.",
       tag: message.tag || message.id || "homejob",
       renotify: true,
-      icon: "./icon-192.png?v=60",
-      badge: "./icon-192.png?v=60",
+      icon: "./icon-192.png?v=62",
+      badge: "./icon-192.png?v=62",
       data: {
         url: message.url || "./index.html",
         taskId: message.taskId || null
