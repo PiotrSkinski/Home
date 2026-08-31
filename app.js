@@ -1301,17 +1301,19 @@
     // The whole screen is rebuilt on every state change, so entry animations
     // must only run when the user actually switches view — otherwise ticking a
     // checkbox (or the 30s reminder sweep) would re-animate everything.
-    const viewKey = `${activeView}:${activeModal || ""}`;
-    const isEntering = viewKey !== lastRenderedViewKey;
-    // Zmiana karty ma zaczynać się od góry. Wcześniej przewinięcie listy
-    // przenosiło się na dashboard i lądowało się w połowie ekranu.
-    // Liczy się sama karta — viewKey zawiera też otwarte okno, więc jego
-    // zamknięcie wyrzucałoby z miejsca, w którym się było.
-    if (ostatniaKarta && activeView !== ostatniaKarta && !activeModal) {
+    // Liczy się WYŁĄCZNIE karta. Wcześniej klucz zawierał też otwarte okno,
+    // więc samo otwarcie modala uchodziło za zmianę widoku i cała zawartość
+    // pod spodem wjeżdżała od nowa z opóźnieniami — to właśnie wyglądało tak,
+    // jakby karta skakała, zanim się ustatkuje.
+    const zmianaKarty = ostatniaKarta !== null && activeView !== ostatniaKarta;
+    const isEntering = ostatniaKarta === null || zmianaKarty;
+
+    // Zmiana karty ma zaczynać się od góry.
+    if (zmianaKarty && !activeModal) {
       window.scrollTo(0, 0);
     }
     ostatniaKarta = activeView;
-    lastRenderedViewKey = viewKey;
+    lastRenderedViewKey = `${activeView}:${activeModal || ""}`;
 
     app.innerHTML = `
       <div class="app-shell">
