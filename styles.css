@@ -4023,7 +4023,8 @@ body.is-modal-open {
   display: block;
   font-size: 1.25rem;
   line-height: 1;
-  transform-origin: 70% 20%;
+  /* Punkt obrotu u góry, jak dłoń na trzonku — włosie zamiata dołem. */
+  transform-origin: 60% 0%;
 }
 
 .brand-dust {
@@ -4047,21 +4048,22 @@ body.is-modal-open {
     animation: miotla-kurz 3.6s ease-in-out infinite;
   }
 
-  /* Klasyczny zamach: miotła idzie po podłodze w PRAWO, potem wraca */
+  /* Zamach po podłodze w PRAWO. Ruch jest głównie poziomy — obrót tylko
+     lekko dokłada się do przechyłu, bo przy mocnym obrocie włosie unosiło
+     się do góry zamiast sunąć po dole. */
   @keyframes miotla-zamiata {
-    0%, 10%  { transform: rotate(-20deg) translateX(-4px); }
-    38%      { transform: rotate(12deg) translateX(5px); }
-    50%      { transform: rotate(16deg) translateX(6px); }
-    72%      { transform: rotate(-20deg) translateX(-4px); }
-    100%     { transform: rotate(-20deg) translateX(-4px); }
+    0%, 12%   { transform: translate(-5px, 1px) rotate(-8deg); }
+    46%       { transform: translate(6px, 1px) rotate(7deg); }
+    56%       { transform: translate(6px, 1px) rotate(7deg); }
+    88%, 100% { transform: translate(-5px, 1px) rotate(-8deg); }
   }
 
-  /* Kurz zbiera się na końcu zamachu i odpływa w prawo */
+  /* Kurz wzbija się dokładnie tam, gdzie kończy się zamach */
   @keyframes miotla-kurz {
-    0%, 30%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
-    42%      { opacity: 0.9; transform: translate(3px, -1px) scale(1); }
-    62%      { opacity: 0; transform: translate(10px, -4px) scale(1.6); }
-    100%     { opacity: 0; transform: translate(10px, -4px) scale(1.6); }
+    0%, 40%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
+    50%      { opacity: 0.9; transform: translate(2px, -1px) scale(1); }
+    70%      { opacity: 0; transform: translate(9px, -4px) scale(1.6); }
+    100%     { opacity: 0; transform: translate(9px, -4px) scale(1.6); }
   }
 }
 
@@ -4153,4 +4155,15 @@ body.is-modal-open {
   .sheet-handle {
     display: none;
   }
+}
+
+/* ===================== Kłódka przy ustawieniach admina ===================== */
+.settings-lock {
+  margin-left: 5px;
+  font-size: 0.78rem;
+  opacity: 0.75;
+}
+
+.settings-lock.is-open {
+  opacity: 0.55;
 }

@@ -130,6 +130,8 @@
   let shoppingModalTaskId = null;
   let rewardCelebration = null;
   let settingsPanel = null;
+  let settingsPanelTarget = null;
+  let adminUnlocked = false;
   let editingTaskId = null;
   let taskModalKind = "standard";
   let requestTaskId = null;
@@ -2140,7 +2142,12 @@
     `;
   }
 
+  const PANELE_ADMINA = ["dzien", "progi"];
+
   function renderSettingsModal() {
+    if (settingsPanel === "admin-pin") {
+      return renderAdminPinPanel();
+    }
     if (settingsPanel === "dzien") {
       return renderDayLengthPanel();
     }
@@ -2149,6 +2156,10 @@
     }
 
     const pauzaAktywna = Boolean(state.household.pause) || state.users.some((user) => user.absence);
+    const zamek = () =>
+      adminUnlocked
+        ? `<span class="settings-lock is-open" title="Odblokowane">🔓</span>`
+        : `<span class="settings-lock" title="Tylko admin domu">🔒</span>`;
     const start = getDayStartHour();
     const koniec = getDayEndHour();
     const progi = getRewardThresholds().map((prog) => prog.points).join(" · ");
@@ -2172,7 +2183,7 @@
             <button class="settings-tile" type="button" data-action="settings-panel" data-panel="dzien">
               <span class="settings-tile-icon" aria-hidden="true">🕑</span>
               <span class="settings-tile-body">
-                <strong>Trwanie dnia</strong>
+                <strong>Trwanie dnia ${zamek()}</strong>
                 <small>${formatHour(start)} — ${formatHour(koniec)}</small>
               </span>
               <span class="settings-tile-arrow" aria-hidden="true">›</span>
@@ -2180,12 +2191,57 @@
             <button class="settings-tile" type="button" data-action="settings-panel" data-panel="progi">
               <span class="settings-tile-icon" aria-hidden="true">🎁</span>
               <span class="settings-tile-body">
-                <strong>Progi punktowe</strong>
+                <strong>Progi punktowe ${zamek()}</strong>
                 <small>${progi} pkt</small>
               </span>
               <span class="settings-tile-arrow" aria-hidden="true">›</span>
             </button>
           </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderAdminPinPanel() {
+    const ustawiony = Boolean(state.household.adminPin);
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="admin-pin-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="admin-pin-title">
+              <button class="icon-button" type="button" data-action="settings-panel" data-panel="" aria-label="Wróć">‹</button>
+              ${ustawiony ? "PIN admina" : "Ustaw PIN admina"}
+            </h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          <form class="task-form" data-form="admin-pin">
+            <div class="form-grid">
+              <label class="wide">
+                <span class="label">${ustawiony ? "Podaj PIN admina" : "Nowy PIN admina (4 cyfry)"}</span>
+                <input
+                  class="input"
+                  type="password"
+                  name="adminPin"
+                  inputmode="numeric"
+                  pattern="[0-9]{4}"
+                  maxlength="4"
+                  autocomplete="off"
+                  required
+                />
+              </label>
+              <span class="form-hint wide">
+                ${
+                  ustawiony
+                    ? "Trwanie dnia i progi punktowe zmienia tylko admin domu. Urlop pozostaje dostępny dla każdego."
+                    : "Ten PIN chroni ustawienia wpływające na punkty całego domu. Zapamiętaj go — bez niego nikt nie zmieni progów ani godzin."
+                }
+              </span>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-action="settings-panel" data-panel="">Anuluj</button>
+              <button class="button" type="submit">${ustawiony ? "Odblokuj" : "Ustaw PIN"}</button>
+            </div>
+          </form>
         </section>
       </div>
     `;
@@ -4011,6 +4067,8 @@
 
     if (action === "open-settings") {
       settingsPanel = null;
+      settingsPanelTarget = null;
+      adminUnlocked = false;
       activeModal = "settings";
       notificationPanelOpen = false;
       moreMenuOpen = false;
@@ -4019,7 +4077,15 @@
     }
 
     if (action === "settings-panel") {
-      settingsPanel = actionElement.dataset.panel || null;
+      const cel = actionElement.dataset.panel || null;
+      if (cel && PANELE_ADMINA.includes(cel) && !adminUnlocked) {
+        settingsPanelTarget = cel;
+        settingsPanel = "admin-pin";
+        render();
+        queueMicrotask(() => document.querySelector("[name='adminPin']")?.focus());
+        return;
+      }
+      settingsPanel = cel;
       render();
       return;
     }
@@ -4377,6 +4443,34 @@
 
     event.preventDefault();
     const formType = form.dataset.form;
+
+    if (formType === "admin-pin") {
+      const data = new FormData(form);
+      const podany = String(data.get("adminPin") || "").trim();
+      if (!/^[0-9]{4}$/.test(podany)) {
+        toast("PIN to 4 cyfry", "Wpisz dokładnie cztery cyfry.");
+        return;
+      }
+      if (!state.household.adminPin) {
+        state.household.adminPin = podany;
+        adminUnlocked = true;
+        settingsPanel = settingsPanelTarget;
+        settingsPanelTarget = null;
+        saveState();
+        render();
+        toast("PIN admina ustawiony", "Od teraz chroni progi punktowe i trwanie dnia.");
+        return;
+      }
+      if (podany !== state.household.adminPin) {
+        toast("Zły PIN", "Spróbuj jeszcze raz.");
+        return;
+      }
+      adminUnlocked = true;
+      settingsPanel = settingsPanelTarget;
+      settingsPanelTarget = null;
+      render();
+      return;
+    }
 
     if (formType === "day-length") {
       const data = new FormData(form);
@@ -5342,17 +5436,21 @@
   // błędu), a telefon nie dostawał nic. Teraz przy każdym starcie
   // przypominamy serwerowi aktualny adres.
   async function odswiezSubskrypcjePush() {
-    if (localStorage.getItem(WEB_PUSH_ENABLED_KEY) !== "true") {
-      return;
-    }
     try {
-      if (!("serviceWorker" in navigator) || Notification.permission !== "granted") {
+      if (!("serviceWorker" in navigator) || typeof Notification === "undefined") {
+        return;
+      }
+      // Nie sprawdzamy własnej flagi w localStorage: usunięcie aplikacji z
+      // ekranu głównego kasuje ją razem z service workerem i subskrypcją.
+      // Zgoda systemowa zostaje, więc to ona decyduje, czy się rejestrować.
+      if (Notification.permission !== "granted") {
         return;
       }
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager?.getSubscription();
       if (subscription) {
         await savePushSubscription(subscription);
+        localStorage.setItem(WEB_PUSH_ENABLED_KEY, "true");
         return;
       }
       // Subskrypcja zniknęła — zakładamy ją od nowa.
@@ -5361,6 +5459,7 @@
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
       });
       await savePushSubscription(swieza);
+      localStorage.setItem(WEB_PUSH_ENABLED_KEY, "true");
     } catch (error) {
       console.warn("Nie udało się odświeżyć subskrypcji push", error);
     }

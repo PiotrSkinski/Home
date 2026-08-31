@@ -5,6 +5,7 @@ const TASK_REMINDER_WINDOW_MINUTES = 90;
 const EVENING_REMINDER_WINDOW_MINUTES = 120;
 const TIME_ZONE = "Europe/Warsaw";
 const MAX_SEND_ATTEMPTS = 3;
+const DEAD_SUBSCRIPTION_THRESHOLD = 8;
 const DEFAULT_VAPID_SUBJECT = "mailto:homejob@example.com";
 
 export default {
@@ -212,8 +213,29 @@ async function pushToUser(env, householdId, userId, message) {
     .all();
 
   for (const subscription of subscriptions.results || []) {
+    if (await isSubscriptionDead(env.DB, subscription.id)) {
+      await env.DB.prepare("DELETE FROM push_subscriptions WHERE id = ?1").bind(subscription.id).run();
+      continue;
+    }
     await createMessageAndSendPush(env, subscription, householdId, userId, message);
   }
+}
+
+// Usunięcie aplikacji z ekranu głównego kasuje subskrypcję po stronie telefonu,
+// ale usługa push nadal przyjmuje wysyłki na stary adres — sent_at wygląda
+// wtedy na sukces, choć nic nie dociera. Telefon, który odbiera, zawsze wraca
+// po treść do /api/push-payload i ustawia delivered_at. Adres, pod który
+// wysłano wiele wiadomości i żadna nie została odebrana, jest martwy.
+async function isSubscriptionDead(db, subscriptionId) {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS ile FROM push_messages
+       WHERE subscription_id = ?1 AND sent_at IS NOT NULL AND delivered_at IS NULL AND sent_at < ?2`
+    )
+    .bind(subscriptionId, cutoff)
+    .first();
+  return Number(row?.ile || 0) >= DEAD_SUBSCRIPTION_THRESHOLD;
 }
 
 async function createMessageAndSendPush(env, subscription, householdId, userId, message) {
