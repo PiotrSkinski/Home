@@ -1730,15 +1730,56 @@
     sheetDrag = { sheet, x: t.clientX, y: t.clientY, dy: 0, aktywny: false };
   }
 
-  // Tło pod otwartym oknem nie może jechać za palcem. body { overflow: hidden }
-  // nie wystarcza na iOS, a blokada w handleSheetMove działała dopiero po
-  // rozpoznaniu gestu na samym arkuszu — dotknięcie tła omijało ją zupełnie.
+  // Tło pod otwartym oknem nie może jechać za palcem, a na iOS samo
+  // body { overflow: hidden } tego nie załatwia — trzeba blokować gest.
+  //
+  // Poprzednie podejścia zgadywały po elemencie („to jest pole formularza,
+  // więc przepuść”) i za każdym razem zostawiały jakąś szczelinę. Teraz
+  // decyduje KIERUNEK gestu: przepuszczamy go tylko wtedy, gdy istnieje
+  // kontener, który faktycznie ma się jak przewinąć w tę stronę.
+  let dotykStart = null;
+
+  function znajdzPrzewijalny(el) {
+    let wezel = el;
+    while (wezel && wezel !== document.body) {
+      if (wezel.scrollHeight > wezel.clientHeight + 1) {
+        const styl = getComputedStyle(wezel);
+        if (/(auto|scroll)/.test(styl.overflowY)) {
+          return wezel;
+        }
+      }
+      wezel = wezel.parentElement;
+    }
+    return null;
+  }
+
+  function oknoOtwarte() {
+    return Boolean(activeModal) || Boolean(rewardCelebration) || notificationPanelOpen;
+  }
+
+  document.addEventListener(
+    "touchstart",
+    (event) => {
+      if (!oknoOtwarte() || event.touches.length !== 1) {
+        dotykStart = null;
+        return;
+      }
+      dotykStart = { y: event.touches[0].clientY, kontener: znajdzPrzewijalny(event.target) };
+    },
+    { passive: true, capture: true }
+  );
+
   function blokujRuchTla(event) {
-    if (!activeModal && !rewardCelebration && !notificationPanelOpen) {
+    if (!oknoOtwarte() || event.touches.length !== 1) {
       return;
     }
-    // Kadrowanie awatara obsługuje gest samo — strona nie może się przy tym
-    // ruszać, więc tu blokujemy aktywnie, a nie przez wyjątek.
+
+    // Suwak i przełączniki mają własne gesty poziome.
+    if (event.target.closest?.("input[type='range'], .push-switch")) {
+      return;
+    }
+
+    // Kadrowanie awatara obsługuje przesuwanie samo.
     if (event.target.closest?.(".avatar-stage")) {
       if (event.cancelable) {
         event.preventDefault();
@@ -1746,31 +1787,20 @@
       return;
     }
 
-    // Wyjątek dotyczy WYŁĄCZNIE kontrolek, które same potrzebują przeciągania:
-    // suwaka i przełącznika. Wcześniej obejmował wszystkie input/select/
-    // textarea, czyli praktycznie cały formularz zadania — i wtedy gest
-    // rozpoczęty na dowolnym polu przesuwał stronę pod oknem.
-    if (event.target.closest?.("input[type='range'], .push-switch")) {
-      return;
-    }
-
-    // Długi opis może mieć własne przewijanie — puszczamy je tylko wtedy,
-    // gdy naprawdę jest co przewijać.
-    const pole = event.target.closest?.("textarea");
-    if (pole && pole.scrollHeight > pole.clientHeight) {
-      return;
-    }
-    const wPrzewijalnym = event.target.closest?.(".modal, .notification-panel, .shopping-add-list, .push-diag");
-    if (!wPrzewijalnym) {
+    const kontener = dotykStart?.kontener;
+    if (!kontener) {
       if (event.cancelable) {
         event.preventDefault();
       }
       return;
     }
-    // Wewnątrz okna pozwalamy przewijać, ale nie dalej niż jego własne krańce.
-    const naGorze = wPrzewijalnym.scrollTop <= 0;
-    const naDole = wPrzewijalnym.scrollTop + wPrzewijalnym.clientHeight >= wPrzewijalnym.scrollHeight - 1;
-    if (naGorze && naDole && event.cancelable) {
+
+    const dy = event.touches[0].clientY - dotykStart.y;
+    const naGorze = kontener.scrollTop <= 0;
+    const naDole = kontener.scrollTop + kontener.clientHeight >= kontener.scrollHeight - 1;
+    // Palec w dół to przewijanie ku górze treści i odwrotnie.
+    const dobija = (dy > 0 && naGorze) || (dy < 0 && naDole);
+    if (dobija && event.cancelable) {
       event.preventDefault();
     }
   }

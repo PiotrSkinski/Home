@@ -3246,7 +3246,10 @@ body::before {
     }
 
     .modal {
-      animation: sheet-in var(--dur-slow) var(--spring) both;
+      /* Bez --spring: ta krzywa ma 1.56, czyli przeskakuje poza cel, a przy
+         przesunięciu o całą wysokość arkusza wyrzucało to kartę wysoko w górę
+         i dopiero potem opadała na miejsce. Tu ma dojechać i stanąć. */
+      animation: sheet-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
   }
 }
