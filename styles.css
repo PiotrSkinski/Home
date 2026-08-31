@@ -4605,18 +4605,22 @@ body.is-modal-open {
    Widać to było jako odświeżanie tła przy każdym kliknięciu przełącznika.
    Tło pod arkuszem rozmywa już .modal-backdrop, więc sam arkusz go nie
    potrzebuje — zostaje jasna, prawie nieprzezroczysta tafla. */
+/* Arkusz jest NIEPRZEZROCZYSTY. Przy półprzezroczystym tle i zdjętym
+   backdrop-filter przeglądarka gubiła kolejność warstw w trakcie animacji
+   przełącznika i tło na ułamek sekundy wskakiwało na wierzch. Przy pełnym
+   kryciu to fizycznie niemożliwe — nie ma czego przepuścić.
+   isolation tworzy własny kontekst składania, żeby zawartość arkusza nie
+   mieszała się z warstwą tła pod spodem. */
 .modal {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  background: rgba(255, 253, 250, 0.94);
+  background: #fffdfa;
+  isolation: isolate;
 }
 
-/* Gałka i tor dostają własną warstwę, żeby ich animacja nie brudziła
-   niczego dookoła. */
-.push-switch-track {
-  will-change: background;
-}
-
+/* Bez will-change: zostawione na stałe tworzy warstwy, które przy każdej
+   zmianie są ponownie składane — to właśnie pogorszyło migotanie. */
+.push-switch-track,
 .push-switch-knob {
-  will-change: transform;
+  will-change: auto;
 }
