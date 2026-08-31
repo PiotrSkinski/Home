@@ -1324,6 +1324,16 @@
     ostatniaKarta = activeView;
     lastRenderedViewKey = `${activeView}:${activeModal || ""}`;
 
+    // render() buduje #app od nowa, więc otwarty arkusz traci pozycję
+    // przewinięcia. Zapamiętujemy ją i przywracamy, żeby zmiana stanu przy
+    // otwartym oknie nie wyrzucała użytkownika na jego górę.
+    // Arkusz i lista produktów mają osobne przewijanie — obie pozycje muszą
+    // przetrwać, inaczej dopisanie produktu wyrzuca na górę listy.
+    const przewiniecia = [".modal", ".shopping-add-list", ".notification-panel"].map((sel) => ({
+      sel,
+      top: document.querySelector(sel)?.scrollTop || 0
+    }));
+
     app.innerHTML = `
       <div class="app-shell">
         ${renderSidebar(currentUser)}
@@ -1345,6 +1355,17 @@
 
     ustawBlokadePrzewijania(Boolean(activeModal) || notificationPanelOpen);
     dodajUchwytyArkuszy();
+    if (!oknoWlasnieOtwarte) {
+      przewiniecia.forEach(({ sel, top }) => {
+        if (!top) {
+          return;
+        }
+        const el = document.querySelector(sel);
+        if (el) {
+          el.scrollTop = top;
+        }
+      });
+    }
     if (oknoWlasnieOtwarte) {
       document.querySelectorAll(".modal, .reward-celebration-card").forEach((arkusz) => {
         arkusz.classList.add("is-opening");
@@ -5003,7 +5024,6 @@
       if (user && kind && /^([01]\d|2[0-3]):[0-5]\d$/.test(wartosc)) {
         user.pushTimes = { ...(user.pushTimes || {}), [kind]: wartosc };
         saveState();
-        render();
         toast("Zapisano godzinę", `${PUSH_KINDS.find((r) => r.id === kind)?.label}: ${wartosc}`);
       }
       return;
@@ -5015,7 +5035,15 @@
       if (user && kind) {
         user.pushPrefs = { ...(user.pushPrefs || {}), [kind]: event.target.checked };
         saveState();
-        render();
+        // Bez render(): checkbox rysuje się sam przez :checked, a przebudowa
+        // całego #app gubiła przewinięcie arkusza i przemalowywała tło.
+        // Ręcznie dociągamy tylko to, co od przełącznika zależy.
+        const wiersz = event.target.closest(".push-kind");
+        const czas = wiersz?.querySelector("[data-action='push-time']");
+        if (czas) {
+          czas.disabled = !event.target.checked;
+          wiersz.querySelector(".push-time")?.classList.toggle("is-off", !event.target.checked);
+        }
       }
       return;
     }
