@@ -130,7 +130,8 @@
 
   const REQUEST_LABELS = {
     skip: "Nie ma potrzeby",
-    postpone: "Przełożenie terminu"
+    postpone: "Przełożenie terminu",
+    takeover: "Przejęcie zadania"
   };
 
   const app = document.querySelector("#app");
@@ -443,13 +444,16 @@
     }
 
     return value
-      .filter((item) => item && item.taskId && (item.type === "skip" || item.type === "postpone"))
+      .filter((item) => item && item.taskId && (item.type === "skip" || item.type === "postpone" || item.type === "takeover"))
       .map((item) => ({
         id: item.id || uid("request"),
         taskId: String(item.taskId),
         taskTitle: item.taskTitle || "Zadanie",
         type: item.type,
         requestedById: item.requestedById || null,
+        // Bez tego pola wniosek o przejęcie tracił informację, kto ma
+        // decydować, i panel nie pokazywał nikomu przycisków.
+        deciderIds: Array.isArray(item.deciderIds) ? item.deciderIds.filter(Boolean) : [],
         reason: String(item.reason || ""),
         previousDueDate: item.previousDueDate || null,
         proposedDueDate: item.proposedDueDate || null,
@@ -2701,10 +2705,14 @@
           ${lista
             .map((request) => {
               const author = getUser(request.requestedById);
+              // Przejęcie nie ma proponowanego terminu — bez tego rozgałęzienia
+              // formatHumanDate dostawało null i cały widok się wywalał.
               const opis =
                 request.type === "skip"
                   ? "nie ma potrzeby"
-                  : `przełożenie na ${formatHumanDate(request.proposedDueDate)}`;
+                  : request.type === "takeover"
+                    ? "przejęcie zadania"
+                    : `przełożenie na ${formatHumanDate(request.proposedDueDate)}`;
               return `
                 <button class="reward-task-card" type="button" data-action="select-task" data-task-id="${request.taskId}">
                   ${avatar(author, "small")}
@@ -3539,6 +3547,43 @@
     const mine = hasVoted(request, state.currentUserId);
     const isAuthor = request.requestedById === state.currentUserId;
 
+    // Przejęcie: decyduje wyłącznie właściciel zadania, więc zamiast licznika
+    // głosów pokazujemy, na czyją decyzję czekamy.
+    if (request.type === "takeover") {
+      const decydenci = request.deciderIds || [];
+      const mojaDecyzja = decydenci.includes(state.currentUserId);
+      const nazwy = decydenci.map((id) => getUser(id).name).join(", ");
+      return `
+        <section class="detail-card request-card">
+          <div class="section-head">
+            <h2>Przejęcie zadania</h2>
+            <span class="pill amber">Czeka na zgodę</span>
+          </div>
+          <p class="request-lead">${escapeHtml(author.name)} chce przejąć to zadanie.</p>
+          <p class="request-reason">„${escapeHtml(request.reason)}”</p>
+          <div class="request-tally">
+            <span class="pill blue">Decyduje: ${escapeHtml(nazwy)}</span>
+          </div>
+          ${renderVoteList(request)}
+          <div class="split-actions">
+            ${
+              mojaDecyzja && !mine
+                ? `<button class="button" type="button" data-action="vote-yes" data-request-id="${request.id}">Zgoda na przejęcie</button>
+                   <button class="danger-button" type="button" data-action="vote-no" data-request-id="${request.id}">Odmawiam</button>`
+                : mojaDecyzja
+                  ? `<span class="form-hint">Twoja decyzja jest zapisana.</span>`
+                  : `<span class="form-hint">Czekamy na decyzję: ${escapeHtml(nazwy)}.</span>`
+            }
+            ${
+              isAuthor
+                ? `<button class="ghost-button" type="button" data-action="cancel-request" data-request-id="${request.id}">Wycofaj prośbę</button>`
+                : ""
+            }
+          </div>
+        </section>
+      `;
+    }
+
     return `
       <section class="detail-card request-card">
         <div class="section-head">
@@ -3674,6 +3719,8 @@
     }
 
     const isSkip = requestKind === "skip";
+    const isTakeover = requestKind === "takeover";
+    const wlascicieleNazwy = getAssignees(task).map((user) => user.name).join(", ");
     const remaining = getRemainingPostpones(state.currentUserId);
     const suggested = getSuggestedPostponeDate(task);
     const minDate = toISO(addDays(fromISO(task.dueDate), 1));
@@ -3683,7 +3730,9 @@
       <div class="modal-backdrop" role="presentation" data-action="close-modal">
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="request-modal-title">
           <div class="modal-head">
-            <h2 class="modal-title" id="request-modal-title">${isSkip ? "Nie ma potrzeby" : "Przełóż zadanie"}</h2>
+            <h2 class="modal-title" id="request-modal-title">${
+              isSkip ? "Nie ma potrzeby" : isTakeover ? "Przejmij zadanie" : "Przełóż zadanie"
+            }</h2>
             <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
           </div>
           <form class="task-form" data-form="request" data-task-id="${task.id}" data-kind="${requestKind}">
@@ -3692,7 +3741,11 @@
                 ${escapeHtml(task.title)} · obecny termin ${formatHumanDate(task.dueDate)}
               </p>
               ${
-                isSkip
+                isTakeover
+                  ? `<span class="form-hint wide">Zadanie należy do: ${escapeHtml(
+                      wlascicieleNazwy
+                    )}. Bez zgody tej osoby nie przejdzie — napisz, dlaczego chcesz je przejąć.</span>`
+                  : isSkip
                   ? `<span class="form-hint wide">Dom zdecyduje w głosowaniu. Potrzeba ${glosy} ${
                       glosy === 1 ? "głosu" : "głosów"
                     } „za”, żeby zamknąć zadanie bez wykonania.</span>`
@@ -4485,7 +4538,29 @@
     }
 
     if (action === "assign-me") {
-      reassignTask(actionElement.dataset.taskId, [state.currentUserId]);
+      const zadanie = getTask(actionElement.dataset.taskId);
+      if (!zadanie) {
+        return;
+      }
+      // Zadanie bez właściciela albo osoby nieobecnej bierzemy od ręki.
+      // Zadanie obecnego domownika wymaga jego zgody.
+      const wlasciciele = getAssigneeIds(zadanie);
+      const wymagaZgody = wlasciciele.length > 0 && !wlasciciele.some((id) => isUserAbsentNow(id));
+      if (!wymagaZgody) {
+        reassignTask(zadanie.id, [state.currentUserId]);
+        return;
+      }
+      if (getPendingRequestForTask(zadanie.id)) {
+        toast("Wniosek już czeka", "Do tego zadania trwa już inna sprawa.");
+        selectedTaskId = zadanie.id;
+        render();
+        return;
+      }
+      requestTaskId = zadanie.id;
+      requestKind = "takeover";
+      activeModal = "request";
+      render();
+      queueMicrotask(() => document.querySelector("[name='requestReason']")?.focus());
       return;
     }
 
@@ -4762,7 +4837,7 @@
 
     if (formType === "request") {
       const data = new FormData(form);
-      const kind = form.dataset.kind === "skip" ? "skip" : "postpone";
+      const kind = ["skip", "takeover"].includes(form.dataset.kind) ? form.dataset.kind : "postpone";
       const created = createTaskRequest(
         form.dataset.taskId,
         kind,
@@ -5104,7 +5179,17 @@
       return false;
     }
 
-    if (!isAssignee(task, state.currentUserId)) {
+    // Przejęcie składa ktoś SPOZA zadania — reszta wniosków odwrotnie.
+    if (type === "takeover") {
+      if (isAssignee(task, state.currentUserId)) {
+        toast("To już Twoje zadanie", "Przejęcie dotyczy zadań innych domowników.");
+        return false;
+      }
+      if (!getAssigneeIds(task).length) {
+        toast("Zadanie bez właściciela", "Nie ma kogo pytać o zgodę.");
+        return false;
+      }
+    } else if (!isAssignee(task, state.currentUserId)) {
       toast("Najpierw przepisz zadanie", "Wniosek składa osoba, do której należy zadanie.");
       return false;
     }
@@ -5137,11 +5222,16 @@
       taskTitle: task.title,
       type,
       requestedById: state.currentUserId,
+      // O przejęciu decyduje wyłącznie obecny właściciel zadania, nie dom.
+      deciderIds: type === "takeover" ? getAssigneeIds(task) : [],
       reason: cleanReason,
       previousDueDate: task.dueDate,
       proposedDueDate: type === "postpone" ? proposedDueDate : null,
       status: "pending",
-      votes: [{ userId: state.currentUserId, value: "yes", reason: cleanReason, createdAt: new Date().toISOString() }],
+      votes:
+        type === "takeover"
+          ? []
+          : [{ userId: state.currentUserId, value: "yes", reason: cleanReason, createdAt: new Date().toISOString() }],
       createdAt: new Date().toISOString(),
       resolvedAt: null
     };
@@ -5152,26 +5242,42 @@
     const opis =
       type === "skip"
         ? `${author.name} chce zamknąć „${task.title}” bez wykonania.`
-        : `${author.name} chce przełożyć „${task.title}” na ${formatHumanDate(proposedDueDate)}.`;
+        : type === "postpone"
+          ? `${author.name} chce przełożyć „${task.title}” na ${formatHumanDate(proposedDueDate)}.`
+          : `${author.name} chce przejąć „${task.title}”.`;
 
     task.history.push(
       historyEntry(
         type === "skip"
           ? `Wniosek: nie ma potrzeby — ${cleanReason}`
-          : `Wniosek: przełożenie na ${formatHumanDate(proposedDueDate)} — ${cleanReason}`,
+          : type === "postpone"
+            ? `Wniosek: przełożenie na ${formatHumanDate(proposedDueDate)} — ${cleanReason}`
+            : `Wniosek o przejęcie zadania — ${cleanReason}`,
         state.currentUserId
       )
     );
 
-    notifyUsers(
-      state.users.map((user) => user.id).filter((id) => id !== state.currentUserId),
-      {
-        title: type === "skip" ? "Wniosek: nie ma potrzeby" : "Wniosek o przełożenie",
-        body: `${opis} Powód: ${cleanReason}. Zagłosuj w zadaniu.`,
-        taskId: task.id,
-        push: true
-      }
-    );
+    // Powiadomienia o głosowaniu i przejęciu są obowiązkowe: idą bez pola
+    // kind, więc przełączniki w ustawieniach ich nie wyciszają.
+    const odbiorcy =
+      type === "takeover"
+        ? request.deciderIds
+        : state.users.map((user) => user.id).filter((id) => id !== state.currentUserId);
+
+    notifyUsers(odbiorcy, {
+      title:
+        type === "skip"
+          ? "Wniosek: nie ma potrzeby"
+          : type === "postpone"
+            ? "Wniosek o przełożenie"
+            : "Prośba o przejęcie zadania",
+      body:
+        type === "takeover"
+          ? `${opis} Powód: ${cleanReason}. Otwórz zadanie i zdecyduj.`
+          : `${opis} Powód: ${cleanReason}. Zagłosuj w zadaniu.`,
+      taskId: task.id,
+      push: true
+    });
 
     selectedTaskId = task.id;
     resolveRequestIfDecided(request);
@@ -5235,6 +5341,21 @@
   }
 
   function resolveRequestIfDecided(request) {
+    // Przejęcie nie jest głosowaniem domu — wystarczy decyzja właściciela.
+    if (request.type === "takeover") {
+      const glosy = request.votes || [];
+      if (glosy.some((vote) => vote.value === "no")) {
+        rejectRequest(request);
+        return;
+      }
+      const decydenci = request.deciderIds || [];
+      const zgody = glosy.filter((vote) => vote.value === "yes" && decydenci.includes(vote.userId)).length;
+      if (decydenci.length && zgody >= decydenci.length) {
+        approveRequest(request);
+      }
+      return;
+    }
+
     const required = getRequiredVotes();
     const yes = countVotes(request, "yes");
     const no = countVotes(request, "no");
@@ -5261,8 +5382,33 @@
 
     if (request.type === "skip") {
       applySkipToTask(task, request);
-    } else {
-      applyPostponeToTask(task, request);
+      return;
+    }
+    if (request.type === "takeover") {
+      applyTakeoverToTask(task, request);
+      return;
+    }
+    applyPostponeToTask(task, request);
+  }
+
+  function applyTakeoverToTask(task, request) {
+    const poprzedni = getAssigneeIds(task)
+      .map((id) => getUser(id).name)
+      .join(", ");
+    task.history.push(
+      historyEntry(`Zgoda na przejęcie od: ${poprzedni} — ${request.reason}`, request.requestedById)
+    );
+    reassignTask(task.id, [request.requestedById], { przejmujacyId: request.requestedById });
+
+    notifyUsers([request.requestedById], {
+      title: "Zgoda na przejęcie zadania",
+      body: `„${request.taskTitle}” jest teraz Twoje.`,
+      taskId: task.id,
+      push: true
+    });
+
+    if (request.requestedById === state.currentUserId) {
+      toast("Zadanie przejęte", `„${request.taskTitle}” jest teraz Twoje.`);
     }
   }
 
@@ -5281,15 +5427,21 @@
       task.lastNotifiedAt = null;
     }
 
+    const przejecie = request.type === "takeover";
     notifyUsers([request.requestedById], {
-      title: "Wniosek odrzucony",
-      body: `„${request.taskTitle}” zostaje bez zmian. ${powody || "Domownicy zagłosowali przeciw."}`,
+      title: przejecie ? "Odmowa przejęcia zadania" : "Wniosek odrzucony",
+      body: przejecie
+        ? `„${request.taskTitle}” zostaje u obecnej osoby. ${powody || "Bez podania powodu."}`
+        : `„${request.taskTitle}” zostaje bez zmian. ${powody || "Domownicy zagłosowali przeciw."}`,
       taskId: request.taskId,
       push: true
     });
 
     if (request.requestedById === state.currentUserId) {
-      toast("Wniosek odrzucony", "Zadanie zostaje w obecnym terminie.");
+      toast(
+        przejecie ? "Odmowa przejęcia" : "Wniosek odrzucony",
+        przejecie ? "Zadanie zostaje u obecnej osoby." : "Zadanie zostaje w obecnym terminie."
+      );
     }
   }
 
@@ -5412,7 +5564,7 @@
     render();
   }
 
-  function reassignTask(taskId, assigneeIds) {
+  function reassignTask(taskId, assigneeIds, opcje = {}) {
     const task = getTask(taskId);
     const nextIds = Array.from(new Set((Array.isArray(assigneeIds) ? assigneeIds : [assigneeIds]).filter((id) => getUserById(id))));
     if (!task || !nextIds.length) {
@@ -5452,6 +5604,33 @@
     task.assignedAt = new Date().toISOString();
     const nextNames = nextIds.map((id) => getUser(id).name).join(", ");
     task.history.push(historyEntry(`Zmieniono przypisanie na: ${nextNames}`, state.currentUserId));
+
+    // Przy zgodzie na przejęcie klika WŁAŚCICIEL, nie przejmujący. Transfer
+    // musi więc iść po rolach, inaczej oddający dostawałby -10, a przejmujący
+    // nic — mimo że to on bierze na siebie robotę.
+    if (opcje.przejmujacyId && !zastepstwo) {
+      addPointEvent({
+        userId: opcje.przejmujacyId,
+        taskId: task.id,
+        delta: 10,
+        type: "take",
+        text: "Przejęto zadanie za zgodą właściciela"
+      });
+      previousIds.forEach((prevId) => {
+        addPointEvent({
+          userId: prevId,
+          taskId: task.id,
+          delta: -10 / previousIds.length,
+          type: "give",
+          text: "Oddano zadanie"
+        });
+      });
+      task.history.push(historyEntry("Transfer za przejęcie: +10 / -10 pkt", opcje.przejmujacyId));
+      selectedTaskId = task.id;
+      saveState();
+      render();
+      return;
+    }
 
     const wasMine = previousIds.includes(state.currentUserId);
     const isMine = nextIds.includes(state.currentUserId);
@@ -6866,7 +7045,12 @@
   }
 
   function fromISO(dateIso) {
-    const [year, month, day] = dateIso.split("-").map(Number);
+    // Pusta data zdarza się przy wnioskach bez terminu — lepiej dostać
+    // dzisiejszą datę niż wysypać cały render.
+    if (!dateIso) {
+      return new Date();
+    }
+    const [year, month, day] = String(dateIso).split("-").map(Number);
     return new Date(year, month - 1, day, 12, 0, 0, 0);
   }
 
