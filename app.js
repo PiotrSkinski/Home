@@ -1355,6 +1355,18 @@
     });
   }
 
+  // Na telefonie NIE ustawiamy kursora przy otwarciu okna. iOS natychmiast
+  // podnosi klawiaturę, ta zmniejsza widoczny obszar i wypycha przyklejony do
+  // dołu arkusz w górę — wygląda to tak, jakby karta wyskoczyła pod sufit
+  // i dopiero potem opadła. Na urządzeniu wskaźnikowym kursor jest wygodny
+  // i niczym nie grozi.
+  function ustawKursor(selektor) {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      return;
+    }
+    queueMicrotask(() => document.querySelector(selektor)?.focus());
+  }
+
   function ustawBlokadePrzewijania(zablokuj) {
     document.body.classList.toggle("is-modal-open", zablokuj);
   }
@@ -4116,7 +4128,7 @@
                   ? `<input type="hidden" name="title" value="Zakupy" />`
                   : `<label class="wide">
                       <span class="label">Nazwa</span>
-                      <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="Np. umyć podłogę" maxlength="90" required autofocus />
+                      <input class="input" name="title" value="${escapeAttribute(values.title)}" placeholder="Np. umyć podłogę" maxlength="90" required />
                     </label>`
               }
               <label>
@@ -4536,7 +4548,7 @@
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
-      queueMicrotask(() => document.querySelector("[name='title']")?.focus());
+      ustawKursor("[name='title']");
       return;
     }
 
@@ -4590,7 +4602,7 @@
         settingsPanelTarget = cel;
         settingsPanel = "admin-pin";
         render();
-        queueMicrotask(() => document.querySelector("[name='adminPin']")?.focus());
+        ustawKursor("[name='adminPin']");
         return;
       }
       settingsPanel = cel;
@@ -4646,7 +4658,7 @@
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
-      queueMicrotask(() => document.querySelector("[name='produkt']")?.focus());
+      ustawKursor("[name='produkt']");
       return;
     }
 
@@ -4671,7 +4683,7 @@
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
-      queueMicrotask(() => document.querySelector("[name='shoppingItems']")?.focus());
+      ustawKursor("[name='shoppingItems']");
       return;
     }
 
@@ -4789,7 +4801,7 @@
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
-      queueMicrotask(() => document.querySelector("[name='title']")?.focus());
+      ustawKursor("[name='title']");
       return;
     }
 
@@ -4852,7 +4864,7 @@
       requestKind = "takeover";
       activeModal = "request";
       render();
-      queueMicrotask(() => document.querySelector("[name='requestReason']")?.focus());
+      ustawKursor("[name='requestReason']");
       return;
     }
 
@@ -4870,7 +4882,7 @@
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
-      queueMicrotask(() => document.querySelector("[name='requestReason']")?.focus());
+      ustawKursor("[name='requestReason']");
       return;
     }
 
@@ -4885,7 +4897,7 @@
       notificationPanelOpen = false;
       moreMenuOpen = false;
       render();
-      queueMicrotask(() => document.querySelector("[name='voteReason']")?.focus());
+      ustawKursor("[name='voteReason']");
       return;
     }
 
@@ -5910,7 +5922,7 @@
         requestTaskId = task.id;
         requestKind = "takeover";
         activeModal = "request";
-        queueMicrotask(() => document.querySelector("[name='requestReason']")?.focus());
+        ustawKursor("[name='requestReason']");
       }
       selectedTaskId = task.id;
       render();
@@ -6655,7 +6667,7 @@
 
     saveState();
     render();
-    queueMicrotask(() => document.querySelector("[name='produkt']")?.focus());
+    ustawKursor("[name='produkt']");
   }
 
   function removeShoppingItem(taskId, itemId) {
