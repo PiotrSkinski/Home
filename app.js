@@ -5487,21 +5487,13 @@
     const title = isRecurring ? "Nowe zadanie cykliczne" : "Nowe zadanie";
     const body = `${creator.name} dodał(a): ${task.title}`;
 
-    state.users
-      .filter((user) => user.id !== state.currentUserId)
-      .forEach((user) => {
-        state.notifications.unshift({
-          id: uid("notification"),
-          taskId: task.id,
-          title,
-          body,
-          recipientUserId: user.id,
-          read: false,
-          createdAt: new Date().toISOString()
-        });
-      });
-
-    state.notifications = state.notifications.slice(0, NOTIFICATIONS_LIMIT);
+    // Przez wspólny helper, nie ręcznie: budowanie obiektu na piechotę gubiło
+    // flagę push i worker pomijał te powiadomienia — w aplikacji było widać
+    // nowe zadanie, a na telefon nie przychodziło nic.
+    notifyUsers(
+      state.users.map((user) => user.id).filter((id) => id !== state.currentUserId),
+      { title, body, taskId: task.id, push: true }
+    );
   }
 
   function maybeSuggestReassign(task) {
