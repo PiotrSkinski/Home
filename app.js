@@ -132,6 +132,8 @@
   let settingsPanel = null;
   let settingsPanelTarget = null;
   let adminUnlocked = false;
+  const pushDiag = { blad: null, zapisano: null, poprzedni: null };
+  let pushStan = null;
   let editingTaskId = null;
   let taskModalKind = "standard";
   let requestTaskId = null;
@@ -2148,6 +2150,9 @@
     if (settingsPanel === "admin-pin") {
       return renderAdminPinPanel();
     }
+    if (settingsPanel === "push") {
+      return renderPushPanel();
+    }
     if (settingsPanel === "dzien") {
       return renderDayLengthPanel();
     }
@@ -2180,6 +2185,14 @@
               </span>
               <span class="settings-tile-arrow" aria-hidden="true">›</span>
             </button>
+            <button class="settings-tile" type="button" data-action="settings-panel" data-panel="push">
+              <span class="settings-tile-icon" aria-hidden="true">🔔</span>
+              <span class="settings-tile-body">
+                <strong>Powiadomienia</strong>
+                <small>Stan tego urządzenia</small>
+              </span>
+              <span class="settings-tile-arrow" aria-hidden="true">›</span>
+            </button>
             <button class="settings-tile" type="button" data-action="settings-panel" data-panel="dzien">
               <span class="settings-tile-icon" aria-hidden="true">🕑</span>
               <span class="settings-tile-body">
@@ -2200,6 +2213,74 @@
         </section>
       </div>
     `;
+  }
+
+  // Panel istnieje po to, żeby dało się odczytać z telefonu, co naprawdę
+  // widzi przeglądarka — bez tego każda diagnoza pusha jest zgadywaniem.
+  function renderPushPanel() {
+    const s = pushStan;
+    const wiersz = (etykieta, wartosc, ok) => `
+      <div class="push-diag-row">
+        <span>${escapeHtml(etykieta)}</span>
+        <strong class="${ok === true ? "is-ok" : ok === false ? "is-bad" : ""}">${escapeHtml(String(wartosc))}</strong>
+      </div>
+    `;
+
+    return `
+      <div class="modal-backdrop" role="presentation" data-action="close-modal">
+        <section class="modal modal-slim" role="dialog" aria-modal="true" aria-labelledby="push-title">
+          <div class="modal-head">
+            <h2 class="modal-title" id="push-title">
+              <button class="icon-button" type="button" data-action="settings-panel" data-panel="" aria-label="Wróć">‹</button>
+              Powiadomienia
+            </h2>
+            <button class="icon-button" type="button" data-action="close-modal" aria-label="Zamknij">×</button>
+          </div>
+          ${
+            s
+              ? `<div class="push-diag">
+                  ${wiersz("Zgoda systemowa", s.zgoda, s.zgoda === "granted")}
+                  ${wiersz("Tryb aplikacji", s.standalone ? "z ekranu głównego" : "przeglądarka", s.standalone)}
+                  ${wiersz("Service worker", s.sw ? "działa" : "brak", s.sw)}
+                  ${wiersz("Subskrypcja", s.sub ? "jest" : "brak", Boolean(s.sub))}
+                  ${s.sub ? wiersz("Adres (końcówka)", s.sub, null) : ""}
+                  ${wiersz("Ostatni zapis", s.zapisano || "nigdy w tej sesji", Boolean(s.zapisano))}
+                  ${s.blad ? wiersz("Ostatni błąd", s.blad, false) : ""}
+                </div>`
+              : `<p class="form-hint">Sprawdzam…</p>`
+          }
+          <p class="form-hint">
+            „Zarejestruj od nowa" wypisuje to urządzenie i zakłada subskrypcję ponownie.
+            Po udanym zapisie adres powinien się zmienić.
+          </p>
+          <div class="form-actions">
+            <button class="ghost-button" type="button" data-action="settings-panel" data-panel="">Wróć</button>
+            <button class="button" type="button" data-action="request-notifications">Zarejestruj od nowa</button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  async function odczytajStanPush() {
+    const stan = {
+      zgoda: typeof Notification === "undefined" ? "brak API" : Notification.permission,
+      standalone: window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true,
+      sw: false,
+      sub: null,
+      zapisano: pushDiag.zapisano,
+      blad: pushDiag.blad
+    };
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      stan.sw = Boolean(reg);
+      const sub = await reg?.pushManager?.getSubscription();
+      stan.sub = sub ? "…" + sub.endpoint.slice(-14) : null;
+    } catch (error) {
+      stan.blad = stan.blad || String(error?.message || error);
+    }
+    pushStan = stan;
+    render();
   }
 
   function renderAdminPinPanel() {
@@ -4087,6 +4168,10 @@
       }
       settingsPanel = cel;
       render();
+      if (cel === "push") {
+        pushStan = null;
+        odczytajStanPush();
+      }
       return;
     }
 
@@ -4404,7 +4489,11 @@
     }
 
     if (action === "request-notifications") {
-      requestNotifications();
+      requestNotifications().then(() => {
+        if (settingsPanel === "push") {
+          odczytajStanPush();
+        }
+      });
       return;
     }
 
@@ -5431,11 +5520,17 @@
 
       await savePushSubscription(subscription, poprzedniEndpoint);
       localStorage.setItem(WEB_PUSH_ENABLED_KEY, "true");
+      pushDiag.blad = null;
+      pushDiag.zapisano = new Date().toISOString();
+      pushDiag.poprzedni = poprzedniEndpoint;
       toast("Powiadomienia push włączone", "Zarejestrowano to urządzenie od nowa. Plan dnia o 08:00 i przypomnienia o godzinie zadania.");
     } catch (error) {
       console.warn("Nie udało się włączyć Web Push", error);
       localStorage.removeItem(WEB_PUSH_ENABLED_KEY);
-      toast("Nie udało się włączyć push", "Sprawdź uprawnienia powiadomień i spróbuj ponownie.");
+      // Konkretny powód, nie ogólnik: bez niego nie da się zdalnie ustalić,
+      // czy poległo tworzenie subskrypcji, czy zapis na serwerze.
+      pushDiag.blad = String(error?.message || error);
+      toast("Nie udało się włączyć push", pushDiag.blad);
     }
 
     render();

@@ -4171,3 +4171,41 @@ body.is-modal-open {
 .settings-lock.is-open {
   opacity: 0.55;
 }
+
+/* ===================== Stan powiadomień ===================== */
+.push-diag {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.5);
+  padding: 4px;
+}
+
+.push-diag-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  font-size: var(--fs-small);
+}
+
+.push-diag-row + .push-diag-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.push-diag-row span {
+  color: var(--muted);
+  font-weight: 720;
+}
+
+.push-diag-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.push-diag-row strong.is-ok { color: var(--success); }
+.push-diag-row strong.is-bad { color: var(--danger); }
