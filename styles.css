@@ -3998,3 +3998,113 @@ body.is-modal-open {
   margin-right: 4px;
   vertical-align: middle;
 }
+
+/* ===================== Ikona ustawień ===================== */
+.gear-icon {
+  display: grid;
+  place-items: center;
+}
+
+.gear-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+/* ===================== Logo: miotła wymiata ===================== */
+/* Tło kafelka stoi — rusza się wyłącznie miotła. Wcześniej kołysał się
+   cały kafelek razem z gradientem. */
+.brand-mark {
+  position: relative;
+  overflow: hidden;
+  animation: none !important;
+}
+
+.brand-broom {
+  display: block;
+  font-size: 1.25rem;
+  line-height: 1;
+  transform-origin: 70% 20%;
+}
+
+.brand-dust {
+  position: absolute;
+  bottom: 6px;
+  left: 7px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0));
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .brand-broom {
+    animation: miotla-zamiata 3.6s ease-in-out infinite;
+  }
+
+  .brand-dust {
+    animation: miotla-kurz 3.6s ease-in-out infinite;
+  }
+
+  /* Zamach w prawo, powrót, i tak w kółko */
+  @keyframes miotla-zamiata {
+    0%, 12%   { transform: rotate(14deg) translateX(2px); }
+    32%       { transform: rotate(-16deg) translateX(-3px); }
+    52%, 100% { transform: rotate(14deg) translateX(2px); }
+  }
+
+  /* Kurz pojawia się dopiero na końcu ruchu i odpływa w lewo */
+  @keyframes miotla-kurz {
+    0%, 26%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
+    36%      { opacity: 0.9; transform: translate(-2px, -1px) scale(1); }
+    56%      { opacity: 0; transform: translate(-8px, -4px) scale(1.5); }
+    100%     { opacity: 0; transform: translate(-8px, -4px) scale(1.5); }
+  }
+}
+
+/* ===================== Arkusze: zapas na dole i przeciąganie ===================== */
+@media (max-width: 720px) {
+  /* Ostatni element arkusza musi mieć własny zapas — dolny padding
+     kontenera przewijania nie wchodzi do obszaru przewijania, więc bez tego
+     zaokrąglony róg iPhone'a przycina ostatni kafelek. */
+  .modal > *:last-child {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .modal .form-actions {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .modal,
+  .reward-celebration-card {
+    transition: transform 240ms var(--ease);
+    touch-action: pan-y;
+  }
+}
+
+/* ===================== Pełny ranking: pasek pod spodem ===================== */
+/* Punkty idą do górnego wiersza obok imienia, pasek dostaje całą szerokość —
+   tak samo jak w mini rankingu. */
+/* Wcześniejsza reguła mobilna spychała punkty do drugiej kolumny pod meta —
+   wracamy do trzech kolumn, żeby liczba stanęła po prawej przy imieniu. */
+.leader-row {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: start;
+  row-gap: 8px;
+}
+
+.leader-row .person-points {
+  grid-column: 3;
+  justify-self: end;
+  align-self: center;
+  color: var(--accent-strong);
+  font-size: 0.95rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.leader-row .reward-axis {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}

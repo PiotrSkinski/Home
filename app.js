@@ -640,7 +640,8 @@
     claims.forEach((claim) => knownRewardClaimIds.add(claim.id));
 
     if (swiezy) {
-      // Próg przebity własnym zadaniem — konfetti leci przez cały ekran.
+      // Próg przebity własnym zadaniem: miotła zostaje, konfetti dochodzi.
+      sweepCelebration();
       startKonfetti(2800);
     }
   }
@@ -1558,6 +1559,103 @@
   }
 
   /* ============ Przesuń w prawo, aby ukończyć ============ */
+  // Uchwyt na górze arkusza sugerował, że da się go ściągnąć w dół — teraz
+  // faktycznie się da. Przeciąganie startuje tylko, gdy treść jest na samej
+  // górze, żeby nie odbierać zwykłego przewijania.
+  const SHEET_CLOSE_DISTANCE = 110;
+  let sheetDrag = null;
+
+  function zamknijAktywneOkno() {
+    if (rewardCelebration) {
+      rewardCelebration = null;
+      stopKonfetti();
+      render();
+      return true;
+    }
+    if (activeModal === "shopping-item") {
+      activeModal = null;
+      shoppingModalTaskId = null;
+      render();
+      return true;
+    }
+    if (activeModal) {
+      activeModal = null;
+      editingTaskId = null;
+      taskModalKind = "standard";
+      requestTaskId = null;
+      votingRequestId = null;
+      settingsPanel = null;
+      render();
+      return true;
+    }
+    return false;
+  }
+
+  function handleSheetStart(event) {
+    if (event.touches.length !== 1) {
+      return;
+    }
+    const sheet = event.target.closest(".modal, .reward-celebration-card");
+    if (!sheet || window.innerWidth > 720) {
+      return;
+    }
+    // Pola formularza mają swoje własne gesty — nie przejmujemy ich.
+    if (event.target.closest("input, textarea, select")) {
+      return;
+    }
+    if (sheet.scrollTop > 0) {
+      return;
+    }
+    const t = event.touches[0];
+    sheetDrag = { sheet, x: t.clientX, y: t.clientY, dy: 0, aktywny: false };
+  }
+
+  function handleSheetMove(event) {
+    if (!sheetDrag || event.touches.length !== 1) {
+      return;
+    }
+    const t = event.touches[0];
+    const dx = t.clientX - sheetDrag.x;
+    const dy = t.clientY - sheetDrag.y;
+
+    if (!sheetDrag.aktywny) {
+      if (Math.abs(dy) < 10 && Math.abs(dx) < 10) {
+        return;
+      }
+      // Gest w bok albo w górę to nie zamykanie — odpuszczamy.
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) {
+        sheetDrag = null;
+        return;
+      }
+      sheetDrag.aktywny = true;
+      sheetDrag.sheet.style.transition = "none";
+    }
+
+    sheetDrag.dy = Math.max(0, dy);
+    sheetDrag.sheet.style.transform = `translateY(${sheetDrag.dy}px)`;
+  }
+
+  function handleSheetEnd() {
+    if (!sheetDrag) {
+      return;
+    }
+    const { sheet, dy, aktywny } = sheetDrag;
+    sheetDrag = null;
+    if (!aktywny) {
+      return;
+    }
+    sheet.style.transition = "";
+    sheet.style.transform = "";
+    if (dy >= SHEET_CLOSE_DISTANCE) {
+      zamknijAktywneOkno();
+    }
+  }
+
+  document.addEventListener("touchstart", handleSheetStart, { passive: true });
+  document.addEventListener("touchmove", handleSheetMove, { passive: true });
+  document.addEventListener("touchend", handleSheetEnd, { passive: true });
+  document.addEventListener("touchcancel", handleSheetEnd, { passive: true });
+
   const SWIPE_THRESHOLD = 96;
   let swipe = null;
 
@@ -1774,7 +1872,7 @@
     return `
       <header class="topbar">
         <div class="topbar-brand">
-          <div class="brand-mark" aria-hidden="true">🧹</div>
+          <div class="brand-mark" aria-hidden="true"><span class="brand-broom">🧹</span><span class="brand-dust"></span></div>
           <div>
             <h1 class="brand-title">HomeJob</h1>
             <p class="brand-subtitle">Wspólny rytm domu</p>
@@ -1826,7 +1924,12 @@
           aria-label="Ustawienia"
           title="${isPaused ? "Ustawienia — zadania wstrzymane" : "Ustawienia"}"
         >
-          <span aria-hidden="true">⚙</span>
+          <span class="gear-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3.1" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </span>
         </button>
       </div>
     `;
@@ -1837,7 +1940,7 @@
       <main class="login-page">
         <section class="login-card onboarding-card">
           <div class="topbar-brand">
-            <div class="brand-mark" aria-hidden="true">🧹</div>
+            <div class="brand-mark" aria-hidden="true"><span class="brand-broom">🧹</span><span class="brand-dust"></span></div>
             <div>
               <h1 class="brand-title">HomeJob</h1>
               <p class="brand-subtitle">Wybierz dom albo utwórz nowe gospodarstwo</p>
@@ -3656,9 +3759,9 @@
                 <div class="leader-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <span class="compact-meta">${row.counts.today} dziś · ${row.counts.week} w tygodniu · ${row.counts.month} w miesiącu</span>
-                  ${renderRewardAxis(row.points, "", row.user.id)}
                 </div>
                 <div class="person-points">${formatPoints(row.points)} pkt</div>
+                ${renderRewardAxis(row.points, "", row.user.id)}
               </div>
             `
           )

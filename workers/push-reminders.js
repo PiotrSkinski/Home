@@ -26,15 +26,19 @@ async function runReminderJob(env) {
   await ensurePushSchema(env.DB);
 
   const now = new Date();
-  const localNow = getLocalDateTime(now);
   const households = await env.DB.prepare("SELECT id, value FROM households").all();
 
   for (const row of households.results || []) {
     const state = safeParseState(row.value);
-    if (!state?.users?.length || !state?.tasks?.length) {
+    // Kiedyś dom bez zadań był pomijany w całości — razem z powiadomieniami
+    // o nagrodach i premii domowej, które z zadaniami nie mają nic wspólnego.
+    if (!state?.users?.length) {
       continue;
     }
 
+    // Doba domu może zaczynać się później niż o północy (ustawienia aplikacji).
+    // Bez tego worker i aplikacja rozjeżdżały się o jeden dzień.
+    const localNow = getLocalDateTime(now, Number(state.household?.dayStart) || 0);
     const householdId = state.household?.id || row.id;
     if (isHouseholdPaused(state, localNow.date)) {
       continue;
@@ -44,7 +48,7 @@ async function runReminderJob(env) {
     const votedOnTaskIds = new Set(
       (state.taskRequests || []).filter((request) => request?.status === "pending").map((request) => request.taskId)
     );
-    const openTasks = state.tasks.filter((task) => task.status === "open" && !votedOnTaskIds.has(task.id));
+    const openTasks = (state.tasks || []).filter((task) => task.status === "open" && !votedOnTaskIds.has(task.id));
 
     if (isWithinTimeWindow(localNow.minutes, timeToMinutes(DAILY_DIGEST_TIME), DAILY_DIGEST_WINDOW_MINUTES)) {
       await sendDailyDigest(env, householdId, state, openTasks, localNow);
@@ -346,7 +350,7 @@ async function importVapidPrivateKey(env) {
   return crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
 }
 
-function getLocalDateTime(date) {
+function getLocalDateTime(date, dayStartHour = 0) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TIME_ZONE,
     year: "numeric",
@@ -358,10 +362,20 @@ function getLocalDateTime(date) {
   }).formatToParts(date);
   const value = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
 
+  const godzina = Number(value.hour);
+  let dzien = `${value.year}-${value.month}-${value.day}`;
+
+  // Przed startem doby wciąż trwa dzień poprzedni — tak samo liczy to aplikacja.
+  if (dayStartHour > 0 && godzina < dayStartHour) {
+    const d = new Date(`${dzien}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    dzien = d.toISOString().slice(0, 10);
+  }
+
   return {
-    date: `${value.year}-${value.month}-${value.day}`,
+    date: dzien,
     time: `${value.hour}:${value.minute}`,
-    minutes: Number(value.hour) * 60 + Number(value.minute)
+    minutes: godzina * 60 + Number(value.minute)
   };
 }
 
