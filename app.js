@@ -167,6 +167,7 @@
   let notificationPanelOpen = false;
   let lastRenderedViewKey = null;
   let ostatniaKarta = null;
+  let ostatnieOkno = null;
   let pauseModalTarget = "dom";
   let knownRewardClaimIds = null;
   let countedValues = new Map();
@@ -1312,6 +1313,14 @@
     if (zmianaKarty && !activeModal) {
       window.scrollTo(0, 0);
     }
+    // Animacja wejścia arkusza ma się odpalić tylko wtedy, gdy okno faktycznie
+    // się otwiera. render() przebudowuje całe #app, więc każda zmiana stanu
+    // przy otwartym oknie (np. przełącznik powiadomień) tworzyła modal od nowa
+    // i animacja startowała od początku — arkusz podskakiwał przy każdym kliknięciu.
+    const biezaceOkno = activeModal || (rewardCelebration ? "celebration" : null);
+    const oknoWlasnieOtwarte = Boolean(biezaceOkno) && biezaceOkno !== ostatnieOkno;
+    ostatnieOkno = biezaceOkno;
+
     ostatniaKarta = activeView;
     lastRenderedViewKey = `${activeView}:${activeModal || ""}`;
 
@@ -1336,6 +1345,11 @@
 
     ustawBlokadePrzewijania(Boolean(activeModal) || notificationPanelOpen);
     dodajUchwytyArkuszy();
+    if (oknoWlasnieOtwarte) {
+      document.querySelectorAll(".modal, .reward-celebration-card").forEach((arkusz) => {
+        arkusz.classList.add("is-opening");
+      });
+    }
     growProgressBars();
     animateCounters();
   }

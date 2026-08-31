@@ -2840,7 +2840,8 @@ html {
     animation: backdrop-in var(--dur) var(--ease) both;
   }
 
-  .modal {
+  /* Tak samo jak sheet-in: tylko przy otwarciu, nie przy każdym renderze. */
+  .modal.is-opening {
     animation: modal-in var(--dur-slow) var(--ease) both;
   }
 
@@ -3245,10 +3246,11 @@ body::before {
       to   { transform: translateY(0); }
     }
 
-    .modal {
-      /* Bez --spring: ta krzywa ma 1.56, czyli przeskakuje poza cel, a przy
-         przesunięciu o całą wysokość arkusza wyrzucało to kartę wysoko w górę
-         i dopiero potem opadała na miejsce. Tu ma dojechać i stanąć. */
+    /* Tylko przy faktycznym otwarciu okna. Bez tego każde przerysowanie
+       (a render() przebudowuje całe #app) odpalało wjazd od nowa.
+       Krzywa bez przeskoku poza cel: --spring ma 1.56 i przy przesunięciu
+       o całą wysokość arkusza wyrzucało go wysoko w górę. */
+    .modal.is-opening {
       animation: sheet-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
   }
@@ -3896,7 +3898,7 @@ body.is-modal-open {
     animation: gratulacje-tlo 260ms var(--ease) both;
   }
 
-  .reward-celebration-card {
+  .reward-celebration-card.is-opening {
     animation: gratulacje-karta 460ms var(--spring) both;
   }
 
