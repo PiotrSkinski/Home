@@ -4596,3 +4596,27 @@ body.is-modal-open {
 [hidden] {
   display: none !important;
 }
+
+/* ===================== Arkusz bez własnego rozmycia ===================== */
+/* .modal dostał backdrop-filter razem z paskiem bocznym i belką — w regule
+   opisanej jako „tanie, bo elementy nieliczne i STAŁE”. Modal stały nie jest:
+   jego treść zmienia się przy każdej interakcji, a w WebKicie zmiana wewnątrz
+   elementu z backdrop-filter wymusza przeliczenie całego rozmytego obszaru.
+   Widać to było jako odświeżanie tła przy każdym kliknięciu przełącznika.
+   Tło pod arkuszem rozmywa już .modal-backdrop, więc sam arkusz go nie
+   potrzebuje — zostaje jasna, prawie nieprzezroczysta tafla. */
+.modal {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: rgba(255, 253, 250, 0.94);
+}
+
+/* Gałka i tor dostają własną warstwę, żeby ich animacja nie brudziła
+   niczego dookoła. */
+.push-switch-track {
+  will-change: background;
+}
+
+.push-switch-knob {
+  will-change: transform;
+}
