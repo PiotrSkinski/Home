@@ -4029,8 +4029,8 @@ body.is-modal-open {
 
 .brand-dust {
   position: absolute;
-  bottom: 6px;
-  right: 8px;
+  bottom: 7px;
+  right: 10px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
@@ -4048,22 +4048,22 @@ body.is-modal-open {
     animation: miotla-kurz 3.6s ease-in-out infinite;
   }
 
-  /* Zamach po podłodze w PRAWO. Ruch jest głównie poziomy — obrót tylko
-     lekko dokłada się do przechyłu, bo przy mocnym obrocie włosie unosiło
-     się do góry zamiast sunąć po dole. */
+  /* Miotła sunie po SKOSIE wzdłuż własnej osi: pchnięcie w dół-prawo,
+     powrót w górę-lewo. Bez obrotu — obrót czytał się jak podnoszenie
+     włosia, a tu chodzi o przesuwanie go po podłodze. */
   @keyframes miotla-zamiata {
-    0%, 12%   { transform: translate(-5px, 1px) rotate(-8deg); }
-    46%       { transform: translate(6px, 1px) rotate(7deg); }
-    56%       { transform: translate(6px, 1px) rotate(7deg); }
-    88%, 100% { transform: translate(-5px, 1px) rotate(-8deg); }
+    0%, 14%   { transform: translate(-4px, -3px); }
+    48%       { transform: translate(5px, 4px); }
+    58%       { transform: translate(5px, 4px); }
+    90%, 100% { transform: translate(-4px, -3px); }
   }
 
-  /* Kurz wzbija się dokładnie tam, gdzie kończy się zamach */
+  /* Kurz wzbija się na końcu pchnięcia, przy włosiu, i odpływa w prawo */
   @keyframes miotla-kurz {
-    0%, 40%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
-    50%      { opacity: 0.9; transform: translate(2px, -1px) scale(1); }
-    70%      { opacity: 0; transform: translate(9px, -4px) scale(1.6); }
-    100%     { opacity: 0; transform: translate(9px, -4px) scale(1.6); }
+    0%, 42%  { opacity: 0; transform: translate(0, 0) scale(0.5); }
+    52%      { opacity: 0.9; transform: translate(2px, 0) scale(1); }
+    72%      { opacity: 0; transform: translate(9px, -3px) scale(1.6); }
+    100%     { opacity: 0; transform: translate(9px, -3px) scale(1.6); }
   }
 }
 
