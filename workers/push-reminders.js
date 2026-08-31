@@ -51,15 +51,11 @@ async function runReminderJob(env) {
     );
     const openTasks = (state.tasks || []).filter((task) => task.status === "open" && !votedOnTaskIds.has(task.id));
 
-    if (isWithinTimeWindow(localNow.minutes, timeToMinutes(DAILY_DIGEST_TIME), DAILY_DIGEST_WINDOW_MINUTES)) {
-      await sendDailyDigest(env, householdId, state, openTasks, localNow);
-    }
-
+    // Bramka czasowa siedzi teraz przy każdym domowniku, bo każdy może mieć
+    // własną godzinę planu dnia i podsumowania.
+    await sendDailyDigest(env, householdId, state, openTasks, localNow);
     await sendTaskReminders(env, householdId, state, openTasks, localNow);
-
-    if (isWithinTimeWindow(localNow.minutes, timeToMinutes(EVENING_REMINDER_TIME), EVENING_REMINDER_WINDOW_MINUTES)) {
-      await sendEveningReminder(env, householdId, state, openTasks, localNow);
-    }
+    await sendEveningReminder(env, householdId, state, openTasks, localNow);
 
     await sendHouseholdNotices(env, householdId, state);
   }
@@ -67,6 +63,12 @@ async function runReminderJob(env) {
 
 // Przełączniki powiadomień ustawiane w aplikacji (user.pushPrefs).
 // Brak zapisu = włączone, żeby nowy rodzaj nie milczał po cichu.
+// Godzina planu dnia i podsumowania wieczornego jest ustawiana per domownik.
+function godzinaPowiadomienia(state, userId, kind, domyslna) {
+  const zapisana = (state.users || []).find((u) => u.id === userId)?.pushTimes?.[kind];
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(zapisana || "")) ? zapisana : domyslna;
+}
+
 function chcePowiadomienie(state, userId, kind) {
   const user = (state.users || []).find((u) => u.id === userId);
   return user?.pushPrefs?.[kind] !== false;
@@ -99,6 +101,14 @@ async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
     if (isUserAbsent(state, user.id, localNow.date)) {
       continue;
     }
+    if (!chcePowiadomienie(state, user.id, "daily")) {
+      continue;
+    }
+    const poraDnia = godzinaPowiadomienia(state, user.id, "daily", DAILY_DIGEST_TIME);
+    if (!isWithinTimeWindow(localNow.minutes, timeToMinutes(poraDnia), DAILY_DIGEST_WINDOW_MINUTES)) {
+      continue;
+    }
+
     const mine = openTasks.filter((task) => taskAssignees(task).includes(user.id));
     const today = mine.filter((task) => task.dueDate === localNow.date);
     const overdue = mine.filter((task) => task.dueDate < localNow.date);
@@ -122,9 +132,6 @@ async function sendDailyDigest(env, householdId, state, openTasks, localNow) {
       parts.push(`Zaległe (${overdue.length}):\n${formatTaskList(overdue)}`);
     }
 
-    if (!chcePowiadomienie(state, user.id, "daily")) {
-      continue;
-    }
     await pushToUser(env, householdId, user.id, {
       kind: "daily",
       dedupeKey: `${householdId}:${user.id}:daily:${localNow.date}`,
@@ -180,6 +187,10 @@ async function sendEveningReminder(env, householdId, state, openTasks, localNow)
     }
 
     if (!chcePowiadomienie(state, user.id, "evening")) {
+      continue;
+    }
+    const poraWieczoru = godzinaPowiadomienia(state, user.id, "evening", EVENING_REMINDER_TIME);
+    if (!isWithinTimeWindow(localNow.minutes, timeToMinutes(poraWieczoru), EVENING_REMINDER_WINDOW_MINUTES)) {
       continue;
     }
     await pushToUser(env, householdId, user.id, {

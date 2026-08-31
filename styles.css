@@ -4317,3 +4317,47 @@ body.is-modal-open {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ===================== Godzina przy powiadomieniu ===================== */
+.push-kind {
+  display: grid;
+  gap: 0;
+}
+
+/* Przełącznik i jego godzina mają czytać się jako jeden kafelek */
+.push-kind:has(.push-time) .push-switch {
+  border-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.push-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 13px 11px;
+  border: 1px solid var(--glass-border);
+  border-top: 0;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.push-time .label {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 760;
+}
+
+.push-time .input {
+  width: auto;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 16px; /* poniżej 16px iOS przybliża widok przy dotknięciu pola */
+  text-align: right;
+}
+
+.push-time.is-off {
+  opacity: 0.45;
+}

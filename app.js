@@ -34,10 +34,16 @@
     { id: "newTask", label: "Nowe zadanie", opis: "Gdy ktoś doda zadanie" },
     { id: "taskTime", label: "Masz zadanie do wykonania", opis: "O ustawionej godzinie zadania" },
     { id: "rewards", label: "Nagrody", opis: "Próg osiągnięty i premia domowa" },
-    { id: "daily", label: "Plan dnia", opis: "Rano o 08:00" },
+    { id: "daily", label: "Plan dnia", opis: "Podsumowanie na start dnia", godzina: "08:00" },
     { id: "overdue", label: "Zaległe zadania", opis: "Gdy termin minął" },
-    { id: "evening", label: "Podsumowanie wieczorne", opis: "O 22:00" }
+    { id: "evening", label: "Podsumowanie wieczorne", opis: "Co zostało na koniec dnia", godzina: "22:00" }
   ];
+
+  function getPushTime(userId, kind) {
+    const domyslna = PUSH_KINDS.find((r) => r.id === kind)?.godzina || "08:00";
+    const zapisana = getUserById(userId)?.pushTimes?.[kind];
+    return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(zapisana || "")) ? zapisana : domyslna;
+  }
 
   function getPushPref(userId, kind) {
     const user = getUserById(userId);
@@ -2286,6 +2292,7 @@
             ${PUSH_KINDS.map((rodzaj) => {
               const on = getPushPref(state.currentUserId, rodzaj.id);
               return `
+                <div class="push-kind">
                 <label class="push-switch">
                   <span class="push-switch-body">
                     <strong>${escapeHtml(rodzaj.label)}</strong>
@@ -2300,6 +2307,22 @@
                   />
                   <span class="push-switch-track" aria-hidden="true"><span class="push-switch-knob"></span></span>
                 </label>
+                ${
+                  rodzaj.godzina
+                    ? `<div class="push-time ${on && wlaczony ? "" : "is-off"}">
+                        <span class="label">Godzina</span>
+                        <input
+                          class="input"
+                          type="time"
+                          data-action="push-time"
+                          data-kind="${rodzaj.id}"
+                          value="${escapeAttribute(getPushTime(state.currentUserId, rodzaj.id))}"
+                          ${on && wlaczony ? "" : "disabled"}
+                        />
+                      </div>`
+                    : ""
+                }
+                </div>
               `;
             }).join("")}
           </div>
@@ -4561,6 +4584,19 @@
   function handleChange(event) {
     // Przełączniki powiadomień to checkboxy — klik nie wystarczy, dyspozytor
     // akcji reaguje na click, a stan zmienia się dopiero przy change.
+    if (event.target.matches("[data-action='push-time']")) {
+      const user = getCurrentUser();
+      const kind = event.target.dataset.kind;
+      const wartosc = String(event.target.value || "");
+      if (user && kind && /^([01]\d|2[0-3]):[0-5]\d$/.test(wartosc)) {
+        user.pushTimes = { ...(user.pushTimes || {}), [kind]: wartosc };
+        saveState();
+        render();
+        toast("Zapisano godzinę", `${PUSH_KINDS.find((r) => r.id === kind)?.label}: ${wartosc}`);
+      }
+      return;
+    }
+
     if (event.target.matches("[data-action='push-pref']")) {
       const user = getCurrentUser();
       const kind = event.target.dataset.kind;
