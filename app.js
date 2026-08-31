@@ -1006,6 +1006,17 @@
       selectedTaskId = pickInitialTaskId();
     }
 
+    // Przerysowanie przy otwartym oknie przebudowuje całe #app — arkusz ginie
+    // i powstaje od nowa, a na jedną klatkę widać spod niego tło. Ta ścieżka
+    // odpala się 700 ms po każdej zmianie stanu (zapis na serwer, konflikt
+    // 409), więc trafiała dokładnie w moment przełączania przełącznika.
+    // Pozostałe wywołania asynchroniczne — zamiatanie przypomnień i
+    // odświeżanie zdalne — miały to zabezpieczenie od dawna; tu go zabrakło.
+    // Stan jest już scalony; widok dociągnie się przy zamknięciu okna.
+    if (activeModal || rewardCelebration) {
+      return;
+    }
+
     render();
   }
 
