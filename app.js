@@ -1746,9 +1746,18 @@
       return;
     }
 
-    // Kontrolki mają własne gesty — suwak powiększenia przestawał się
-    // przeciągać, bo blokada gasiła mu touchmove i zostawało samo klikanie.
-    if (event.target.closest?.("input, select, textarea, .push-switch")) {
+    // Wyjątek dotyczy WYŁĄCZNIE kontrolek, które same potrzebują przeciągania:
+    // suwaka i przełącznika. Wcześniej obejmował wszystkie input/select/
+    // textarea, czyli praktycznie cały formularz zadania — i wtedy gest
+    // rozpoczęty na dowolnym polu przesuwał stronę pod oknem.
+    if (event.target.closest?.("input[type='range'], .push-switch")) {
+      return;
+    }
+
+    // Długi opis może mieć własne przewijanie — puszczamy je tylko wtedy,
+    // gdy naprawdę jest co przewijać.
+    const pole = event.target.closest?.("textarea");
+    if (pole && pole.scrollHeight > pole.clientHeight) {
       return;
     }
     const wPrzewijalnym = event.target.closest?.(".modal, .notification-panel, .shopping-add-list, .push-diag");
