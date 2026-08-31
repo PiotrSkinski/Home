@@ -1,14 +1,14 @@
-const CACHE_NAME = "homejob-v64";
+const CACHE_NAME = "homejob-v65";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=64",
-  "./app.js?v=64",
-  "./manifest.webmanifest?v=64",
+  "./styles.css?v=65",
+  "./app.js?v=65",
+  "./manifest.webmanifest?v=65",
   "./icon.svg",
-  "./icon-180.png?v=64",
-  "./icon-192.png?v=64",
-  "./icon-512.png?v=64"
+  "./icon-180.png?v=65",
+  "./icon-192.png?v=65",
+  "./icon-512.png?v=65"
 ];
 
 self.addEventListener("install", (event) => {
@@ -109,8 +109,8 @@ async function showPushNotifications() {
     await self.registration.showNotification("HomeJob", {
       body: "Masz zadania do sprawdzenia.",
       tag: "homejob-fallback",
-      icon: "./icon-192.png?v=64",
-      badge: "./icon-192.png?v=64",
+      icon: "./icon-192.png?v=65",
+      badge: "./icon-192.png?v=65",
       data: { url: "./index.html" }
     });
     return;
@@ -121,8 +121,8 @@ async function showPushNotifications() {
       body: message.body || "Masz zadania do sprawdzenia.",
       tag: message.tag || message.id || "homejob",
       renotify: true,
-      icon: "./icon-192.png?v=64",
-      badge: "./icon-192.png?v=64",
+      icon: "./icon-192.png?v=65",
+      badge: "./icon-192.png?v=65",
       data: {
         url: message.url || "./index.html",
         taskId: message.taskId || null

@@ -4023,8 +4023,8 @@ body.is-modal-open {
   display: block;
   font-size: 1.25rem;
   line-height: 1;
-  /* Punkt obrotu u góry, jak dłoń na trzonku — włosie zamiata dołem. */
-  transform-origin: 60% 0%;
+  /* Obrót wokół środka: trzonek idzie w jedną stronę, włosie w drugą. */
+  transform-origin: 50% 50%;
 }
 
 .brand-dust {
@@ -4048,14 +4048,13 @@ body.is-modal-open {
     animation: miotla-kurz 3.6s ease-in-out infinite;
   }
 
-  /* Miotła sunie po SKOSIE wzdłuż własnej osi: pchnięcie w dół-prawo,
-     powrót w górę-lewo. Bez obrotu — obrót czytał się jak podnoszenie
-     włosia, a tu chodzi o przesuwanie go po podłodze. */
+  /* Czysty OBRÓT wokół środka — trzonek odchyla się w górę-lewo, a włosie
+     w dół-prawo. Bez przesuwania w bok: to obrót, nie jazda. */
   @keyframes miotla-zamiata {
-    0%, 14%   { transform: translate(-4px, -3px); }
-    48%       { transform: translate(5px, 4px); }
-    58%       { transform: translate(5px, 4px); }
-    90%, 100% { transform: translate(-4px, -3px); }
+    0%, 14%   { transform: rotate(-16deg); }
+    48%       { transform: rotate(15deg); }
+    58%       { transform: rotate(15deg); }
+    90%, 100% { transform: rotate(-16deg); }
   }
 
   /* Kurz wzbija się na końcu pchnięcia, przy włosiu, i odpływa w prawo */
