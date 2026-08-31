@@ -4539,3 +4539,57 @@ body.is-modal-open {
   width: fit-content;
   max-width: 100%;
 }
+
+/* ===================== Awatar w belce ===================== */
+/* W kafelku obok „Nowe zadanie” awatar był drobny jak na swój kwadrat.
+   Powiększony, ale wciąż z zapasem, żeby nie dotykał krawędzi kafelka. */
+.topbar-actions .ghost-button .avatar.small {
+  width: 32px;
+  height: 32px;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 720px) {
+  .topbar-actions .ghost-button .avatar.small {
+    width: 30px;
+    height: 30px;
+  }
+}
+
+/* ===================== Głosowanie: pulsujący glow ===================== */
+.request-card {
+  border-color: rgba(109, 40, 217, 0.42);
+  box-shadow:
+    var(--shadow-md),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 0 0 3px rgba(109, 40, 217, 0.12);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .request-card {
+    animation: glosowanie-glow 2.8s ease-in-out infinite;
+  }
+
+  @keyframes glosowanie-glow {
+    0%, 100% {
+      box-shadow:
+        var(--shadow-md),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+        0 0 0 3px rgba(109, 40, 217, 0.12),
+        0 0 14px rgba(109, 40, 217, 0.18);
+    }
+    50% {
+      box-shadow:
+        var(--shadow-md),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+        0 0 0 5px rgba(109, 40, 217, 0.2),
+        0 0 26px rgba(219, 39, 119, 0.34);
+    }
+  }
+}
+
+/* Suwak powiększenia musi dać się przeciągać palcem */
+.avatar-zoom input[type="range"] {
+  touch-action: pan-x;
+  height: 34px;
+}

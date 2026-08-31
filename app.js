@@ -166,6 +166,7 @@
   let votingRequestId = null;
   let notificationPanelOpen = false;
   let lastRenderedViewKey = null;
+  let ostatniaKarta = null;
   let pauseModalTarget = "dom";
   let knownRewardClaimIds = null;
   let countedValues = new Map();
@@ -1276,6 +1277,14 @@
     // checkbox (or the 30s reminder sweep) would re-animate everything.
     const viewKey = `${activeView}:${activeModal || ""}`;
     const isEntering = viewKey !== lastRenderedViewKey;
+    // Zmiana karty ma zaczynać się od góry. Wcześniej przewinięcie listy
+    // przenosiło się na dashboard i lądowało się w połowie ekranu.
+    // Liczy się sama karta — viewKey zawiera też otwarte okno, więc jego
+    // zamknięcie wyrzucałoby z miejsca, w którym się było.
+    if (ostatniaKarta && activeView !== ostatniaKarta && !activeModal) {
+      window.scrollTo(0, 0);
+    }
+    ostatniaKarta = activeView;
     lastRenderedViewKey = viewKey;
 
     app.innerHTML = `
@@ -1700,6 +1709,11 @@
   // rozpoznaniu gestu na samym arkuszu — dotknięcie tła omijało ją zupełnie.
   function blokujRuchTla(event) {
     if (!activeModal && !rewardCelebration && !notificationPanelOpen) {
+      return;
+    }
+    // Kontrolki mają własne gesty — suwak powiększenia awatara przestawał się
+    // przeciągać, bo blokada gasiła mu touchmove i zostawało samo klikanie.
+    if (event.target.closest?.("input, select, textarea, .avatar-stage, .push-switch")) {
       return;
     }
     const wPrzewijalnym = event.target.closest?.(".modal, .notification-panel, .shopping-add-list, .push-diag");
@@ -2256,7 +2270,9 @@
       return renderThresholdsPanel();
     }
 
-    const pauzaAktywna = Boolean(state.household.pause) || state.users.some((user) => user.absence);
+    // Liczy się TERAZ, nie sam fakt, że ktoś ma zapisany kiedyś urlop —
+    // dlatego kafelek meldował nieobecność przy komplecie domowników.
+    const pauzaAktywna = isHouseholdPausedNow() || state.users.some((user) => isUserAbsentNow(user.id));
     const zamek = () =>
       adminUnlocked
         ? `<span class="settings-lock is-open" title="Odblokowane">🔓</span>`
@@ -2276,8 +2292,8 @@
             <button class="settings-tile" type="button" data-action="open-pause-modal">
               <span class="settings-tile-icon" aria-hidden="true">🏝️</span>
               <span class="settings-tile-body">
-                <strong>Urlop i wstrzymanie</strong>
-                <small>${pauzaAktywna ? "Aktywne — ktoś jest nieobecny" : "Nikt nie jest nieobecny"}</small>
+                <strong>Urlopy</strong>
+                <small>${pauzaAktywna ? "Ktoś jest teraz nieobecny" : "Wszyscy są w domu"}</small>
               </span>
               <span class="settings-tile-arrow" aria-hidden="true">›</span>
             </button>
@@ -2293,7 +2309,7 @@
               <span class="settings-tile-icon" aria-hidden="true">🔔</span>
               <span class="settings-tile-body">
                 <strong>Powiadomienia</strong>
-                <small>Stan tego urządzenia</small>
+                <small>Ustawienia powiadomień</small>
               </span>
               <span class="settings-tile-arrow" aria-hidden="true">›</span>
             </button>
@@ -3765,8 +3781,8 @@
     return `
       <section class="detail-card request-card">
         <div class="section-head">
-          <h2>${REQUEST_LABELS[request.type]}</h2>
-          <span class="pill amber">Głosowanie</span>
+          <h2>Głosowanie</h2>
+          <span class="pill amber">${REQUEST_LABELS[request.type]}</span>
         </div>
         <p class="request-lead">${escapeHtml(author.name)} prosi o ${
           request.type === "skip"
