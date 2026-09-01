@@ -689,13 +689,14 @@
   }
 
   function recomputeDerived() {
+    const korektaChanged = zastosujKorekteSierpniowa();
     const urlopChanged = zamknijZadaniaZUrlopu();
     const carryoverChanged = processMonthlyCarryover();
     const bonusChanged = refreshHomeBonus();
     const claimsChanged = syncRewardClaims();
     const requestsChanged = expireStaleRequests();
     detectFreshRewardClaim();
-    return urlopChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
+    return korektaChanged || urlopChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
   }
 
   function expireStaleRequests() {
@@ -6904,6 +6905,43 @@
       .filter((user) => user.id !== excludeUserId)
       .map((user) => ({ user, points: getBaseUserPoints(user.id) }))
       .sort((a, b) => a.points - b.points)[0]?.user;
+  }
+
+  // Jednorazowa korekta sierpniowej nadwyżki. Bonusy 14 i 11 policzyła stara
+  // wersja z surowej sumy — bez kar i bez premii domowej. Zamiast przeliczać
+  // zamknięty miesiąc wstecz, dopisujemy uzgodnioną różnicę do bieżącego
+  // wyniku. Stały identyfikator sprawia, że przy synchronizacji między
+  // telefonami zdarzenie nie zdubluje się.
+  function zastosujKorekteSierpniowa() {
+    // Tablica w środku, nie jako const na zewnątrz: recomputeDerived biegnie
+    // przy starcie, zanim deklaracje const zdążą się wykonać, i odwołanie do
+    // niej wywracało całą aplikację.
+    const korekty = [
+      { imie: "Marta", delta: 40 },
+      { imie: "Piotr", delta: 10 }
+    ];
+    let zmiana = false;
+    korekty.forEach(({ imie, delta }) => {
+      const user = state.users.find((item) => item.name === imie);
+      if (!user) {
+        return;
+      }
+      const id = `korekta-nadwyzka-2026-08-${user.id}`;
+      if (state.pointEvents.some((event) => event.id === id)) {
+        return;
+      }
+      state.pointEvents.unshift({
+        id,
+        userId: user.id,
+        taskId: null,
+        delta,
+        type: "correction",
+        text: "Korekta nadwyżki z sierpnia",
+        createdAt: new Date().toISOString()
+      });
+      zmiana = true;
+    });
+    return zmiana;
   }
 
   function nikogoNieMaWDomu(dateIso) {
