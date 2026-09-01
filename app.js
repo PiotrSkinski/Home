@@ -479,6 +479,7 @@
               : PRIORITY[task.priority || "medium"].points,
         shoppingItems,
         isRewardTask: Boolean(task.isRewardTask),
+        holidaySkipped: Boolean(task.holidaySkipped),
         rewardForUserId: task.rewardForUserId || null,
         rewardThreshold: Number(task.rewardThreshold) || null,
         rewardPeriod: task.rewardPeriod || null,
@@ -688,12 +689,13 @@
   }
 
   function recomputeDerived() {
+    const urlopChanged = zamknijZadaniaZUrlopu();
     const carryoverChanged = processMonthlyCarryover();
     const bonusChanged = refreshHomeBonus();
     const claimsChanged = syncRewardClaims();
     const requestsChanged = expireStaleRequests();
     detectFreshRewardClaim();
-    return carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
+    return urlopChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
   }
 
   function expireStaleRequests() {
@@ -3622,6 +3624,7 @@
       isOverdue(task) ? `<span class="pill overdue">Zaległe</span>` : "",
       task.status === "done" ? `<span class="pill done">Ukończone</span>` : "",
       isSkipped(task) ? `<span class="pill skipped">Nie było potrzeby</span>` : "",
+      task.holidaySkipped ? `<span class="pill skipped">Pominięte — urlop</span>` : "",
       !closed && getAssigneeIds(task).some((id) => isUserAbsentNow(id))
         ? `<span class="pill away">${escapeHtml(
             getAssignees(task).filter((user) => isUserAbsentNow(user.id)).map((user) => user.name).join(", ")
@@ -6604,6 +6607,10 @@
   }
 
   function getTaskPoints(task) {
+    // Pominięte z powodu urlopu: zero w obie strony.
+    if (task.holidaySkipped) {
+      return 0;
+    }
     if (task.isRewardTask) {
       return 5;
     }
@@ -6899,6 +6906,54 @@
       .sort((a, b) => a.points - b.points)[0]?.user;
   }
 
+  function nikogoNieMaWDomu(dateIso) {
+    if (isDateWithinPause(dateIso)) {
+      return true;
+    }
+    if (!state.users.length) {
+      return false;
+    }
+    return state.users.every((user) => isUserAbsentOn(user.id, dateIso));
+  }
+
+  // Zadanie, którego termin wypadł w dniu, gdy w domu nie było NIKOGO, nie
+  // jest niczyją zaległością. Zamykamy je bez punktów w żadną stronę, a
+  // zadanie cykliczne i tak dostaje kolejny termin — inaczej po powrocie
+  // z urlopu czekałby stos zaległości i cykl by się urwał.
+  function zamknijZadaniaZUrlopu() {
+    const dzis = todayIso();
+    let zmiana = false;
+
+    state.tasks.slice().forEach((task) => {
+      if (task.status !== "open" || task.isRewardTask || isShoppingTask(task)) {
+        return;
+      }
+      if (task.dueDate >= dzis || !nikogoNieMaWDomu(task.dueDate)) {
+        return;
+      }
+
+      // Kolejny cykl budujemy PRZED wyzerowaniem oryginału — inaczej dziedziczy
+      // flagę urlopu i zerowe punkty, i nowe zadanie rodzi się już zamknięte.
+      const nastepne = task.recurrence.type !== "none" ? createNextRecurringTask(task) : null;
+
+      task.status = "done";
+      task.holidaySkipped = true;
+      task.points = 0;
+      task.completedAt = new Date(`${task.dueDate}T12:00:00`).toISOString();
+      task.completedById = null;
+      task.history.push(historyEntry("Pominięte — urlop (0 pkt)", state.currentUserId));
+
+      if (nastepne) {
+        nastepne.holidaySkipped = false;
+        task.nextRecurringTaskId = nastepne.id;
+        state.tasks.unshift(nastepne);
+      }
+      zmiana = true;
+    });
+
+    return zmiana;
+  }
+
   function processMonthlyCarryover() {
     if (!state.users.length) {
       return false;
@@ -6939,6 +6994,10 @@
     return changed || true;
   }
 
+  // Musi zwrócić DOKŁADNIE tę liczbę, którą aplikacja pokazywała na koniec
+  // tamtego miesiąca — inaczej nadwyżka liczy się z wartości, której nikt
+  // nigdzie nie widział i wyniku nie da się wytłumaczyć.
+  // Wcześniej pomijała dwie rzeczy: karę za zwłokę i premię domową.
   function getPeriodEarnedPoints(userId, periodKey) {
     const completedPoints = state.tasks
       .filter((task) => task.status === "done" && isAssignee(task, userId))
@@ -6950,11 +7009,26 @@
       .filter((event) => getPointPeriodKey(event.createdAt) === periodKey)
       .reduce((sum, event) => sum + event.delta, 0);
 
-    return completedPoints + transferPoints;
+    const overduePenalty = state.tasks.reduce((sum, task) => {
+      const penaltyIds = getPenaltyUserIds(task);
+      if (!penaltyIds.includes(userId)) {
+        return sum;
+      }
+      return sum - (getOverdueDays(task, { okres: periodKey }, userId) * 10) / penaltyIds.length;
+    }, 0);
+
+    const baza = completedPoints + transferPoints + overduePenalty;
+
+    // Premia domowa obowiązywała w tamtym miesiącu — liczba na ekranie była
+    // podwojona ponad celem, więc nadwyżka też musi z niej wychodzić.
+    if (state.household.homeBonus === periodKey && baza > MONTHLY_GOAL) {
+      return MONTHLY_GOAL + (baza - MONTHLY_GOAL) * 2;
+    }
+    return baza;
   }
 
   function getOverdueDays(task, lastDays = null, userId = null) {
-    if (isSkipped(task) || task.isRewardTask) {
+    if (isSkipped(task) || task.isRewardTask || task.holidaySkipped) {
       return 0;
     }
     const dueDate = fromISO(task.dueDate);
@@ -6968,7 +7042,21 @@
     }
 
     let startDate = addDays(penaltyBaseDate, 1);
-    if (lastDays === "month") {
+    let limitKonca = endDate;
+
+    // Okno zamknięte: konkretny miesiąc, z góry i z dołu. Potrzebne przy
+    // rozliczaniu nadwyżki z miesiąca, który już się skończył.
+    if (lastDays && typeof lastDays === "object" && lastDays.okres) {
+      const [rok, mies] = String(lastDays.okres).split("-").map(Number);
+      const poczatekOkresu = new Date(rok, mies - 1, 1, 12, 0, 0, 0);
+      const koniecOkresu = new Date(rok, mies, 0, 12, 0, 0, 0);
+      if (poczatekOkresu > startDate) {
+        startDate = poczatekOkresu;
+      }
+      if (koniecOkresu < limitKonca) {
+        limitKonca = koniecOkresu;
+      }
+    } else if (lastDays === "month") {
       const windowStart = getPointPeriodStart();
       if (windowStart > startDate) {
         startDate = windowStart;
@@ -6980,16 +7068,16 @@
       }
     }
 
-    if (startDate > endDate) {
+    if (startDate > limitKonca) {
       return 0;
     }
 
-    const totalDays = daysBetween(startDate, endDate) + 1;
+    const totalDays = daysBetween(startDate, limitKonca) + 1;
     // Bez wskazanej osoby odliczamy tylko pauzę domu; ze wskazaną — również jej
     // własną nieobecność, żeby wyjazd nie generował kar za zwłokę.
     const excusedDays = userId
-      ? countExcusedDaysInRange(userId, startDate, endDate)
-      : countPausedDaysInRange(startDate, endDate);
+      ? countExcusedDaysInRange(userId, startDate, limitKonca)
+      : countPausedDaysInRange(startDate, limitKonca);
     return Math.max(0, totalDays - excusedDays);
   }
 
