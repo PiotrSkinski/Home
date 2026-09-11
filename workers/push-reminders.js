@@ -27,7 +27,16 @@ async function runReminderJob(env) {
   await ensurePushSchema(env.DB);
 
   const now = new Date();
-  const households = await env.DB.prepare("SELECT id, value FROM households").all();
+  // Pełny zapis domu to setki kB (ukończone zadania z historią), a Worker
+  // czyta go co minutę — to on zjadał limit procesora. Jeśli baza ma okrojoną
+  // kopię z samym tym, czego Worker potrzebuje, bierzemy ją. Baza bez tej
+  // kolumny (zanim API zdąży ją dodać) — wracamy do pełnego zapisu.
+  let households;
+  try {
+    households = await env.DB.prepare("SELECT id, COALESCE(slim_value, value) AS value FROM households").all();
+  } catch (_error) {
+    households = await env.DB.prepare("SELECT id, value FROM households").all();
+  }
 
   for (const row of households.results || []) {
     const state = safeParseState(row.value);

@@ -691,12 +691,13 @@
   function recomputeDerived() {
     const korektaChanged = zastosujKorekteSierpniowa();
     const urlopChanged = zamknijZadaniaZUrlopu();
+    const duplikatyChanged = usunDuplikatyCykli();
     const carryoverChanged = processMonthlyCarryover();
     const bonusChanged = refreshHomeBonus();
     const claimsChanged = syncRewardClaims();
     const requestsChanged = expireStaleRequests();
     detectFreshRewardClaim();
-    return korektaChanged || urlopChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
+    return korektaChanged || urlopChanged || duplikatyChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
   }
 
   function expireStaleRequests() {
@@ -6958,6 +6959,69 @@
   // jest niczyją zaległością. Zamykamy je bez punktów w żadną stronę, a
   // zadanie cykliczne i tak dostaje kolejny termin — inaczej po powrocie
   // z urlopu czekałby stos zaległości i cykl by się urwał.
+  function hash53(tekst) {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < tekst.length; i += 1) {
+      const znak = tekst.charCodeAt(i);
+      h1 = Math.imul(h1 ^ znak, 2654435761);
+      h2 = Math.imul(h2 ^ znak, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  }
+
+  // Sprzątanie po błędzie z poprzedniej wersji: po urlopie oba telefony
+  // zamknęły te same zadania i każdy dorobił własne kolejne wystąpienie.
+  // Rozpoznajemy je po tym, że są wygenerowane z cyklu, otwarte i zgadzają się
+  // w tytule, rodzaju powtarzania, terminie i osobach.
+  // Zostawiany musi być TEN SAM na obu telefonach — gdyby każdy wybrał inny
+  // i skasował „ten drugi", nagrobki z obu stron usunęłyby oba. Stąd wybór
+  // po kolejności id, a nie po tym, co akurat leży pierwsze w pamięci.
+  function usunDuplikatyCykli() {
+    const grupy = new Map();
+    state.tasks.forEach((task) => {
+      if (task.status !== "open" || task.history?.[0]?.text !== "Utworzono z cyklu") {
+        return;
+      }
+      const klucz = [
+        task.title,
+        task.recurrence?.type,
+        task.dueDate,
+        getAssigneeIds(task).slice().sort().join(",")
+      ].join("|");
+      if (!grupy.has(klucz)) {
+        grupy.set(klucz, []);
+      }
+      grupy.get(klucz).push(task);
+    });
+
+    const zamiany = new Map();
+    grupy.forEach((zadania) => {
+      if (zadania.length < 2) {
+        return;
+      }
+      const [zostaje, ...reszta] = zadania.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      reszta.forEach((task) => zamiany.set(task.id, zostaje.id));
+    });
+
+    if (!zamiany.size) {
+      return false;
+    }
+
+    state.tasks = state.tasks.filter((task) => !zamiany.has(task.id));
+    // Rodzic wskazujący na usunięty duplikat ma wskazywać na ocalałe zadanie,
+    // żeby cofnięcie ukończenia dalej wiedziało, co sprzątnąć.
+    state.tasks.forEach((task) => {
+      if (zamiany.has(task.nextRecurringTaskId)) {
+        task.nextRecurringTaskId = zamiany.get(task.nextRecurringTaskId);
+      }
+    });
+    zamiany.forEach((_, id) => rememberDeletedTask(id));
+    return true;
+  }
+
   function zamknijZadaniaZUrlopu() {
     const dzis = todayIso();
     let zmiana = false;
@@ -6973,16 +7037,26 @@
       // Kolejny cykl budujemy PRZED wyzerowaniem oryginału — inaczej dziedziczy
       // flagę urlopu i zerowe punkty, i nowe zadanie rodzi się już zamknięte.
       const nastepne = task.recurrence.type !== "none" ? createNextRecurringTask(task) : null;
+      const zamknieteO = new Date(`${task.dueDate}T12:00:00`).toISOString();
 
       task.status = "done";
       task.holidaySkipped = true;
       task.points = 0;
-      task.completedAt = new Date(`${task.dueDate}T12:00:00`).toISOString();
+      task.completedAt = zamknieteO;
       task.completedById = null;
       task.history.push(historyEntry("Pominięte — urlop (0 pkt)", state.currentUserId));
 
       if (nastepne) {
         nastepne.holidaySkipped = false;
+        // To zamknięcie robi SAMO każdy telefon, zwykle zaraz po otwarciu
+        // aplikacji — zanim zdąży pobrać stan z serwera. Z losowym id każdy
+        // dorabiał własne kolejne wystąpienie, a scalenie łączy tylko te same
+        // id, więc zostawały oba. Stałe id sprawia, że oba telefony tworzą to
+        // samo zadanie i scalenie zlewa je w jedno.
+        // W id jest też moment zamknięcia: cofnięcie ukończenia zostawia
+        // nagrobek id wygenerowanego zadania, a samo id rodzica odtworzyłoby
+        // przy ponownym zamknięciu zakopane id i nowy termin by przepadł.
+        nastepne.id = `task-c${hash53(`${task.id}|${zamknieteO}`)}`;
         task.nextRecurringTaskId = nastepne.id;
         state.tasks.unshift(nastepne);
       }
