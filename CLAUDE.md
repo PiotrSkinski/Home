@@ -25,7 +25,7 @@ There is no local dev server or test suite in this repo — changes are validate
 
 - **Pages**: framework preset `None`, empty build command, build output directory `.`. Requires a D1 binding named exactly `DB`.
 - **DB setup**: run `schema.sql` once to initialize (destructive — wipes existing data). Run `push-schema.sql` to add push tables to an existing database without losing data.
-- **Worker** (`homejob-reminders`): needs its own `DB` binding to the same D1 database, cron `* * * * *`, and secret `VAPID_PRIVATE_KEY` (never commit this value). `VAPID_PUBLIC_KEY` must match between `workers/wrangler.toml` and the `VAPID_PUBLIC_KEY` constant hardcoded in `app.js`.
+- **Worker** (`homejob-reminders`): needs its own `DB` binding to the same D1 database, cron `*/10 * * * *` (every 10 minutes; the reminder windows are 90–180 min, so nothing is missed), and secret `VAPID_PRIVATE_KEY` (never commit this value). `VAPID_PUBLIC_KEY` must match between `workers/wrangler.toml` and the `VAPID_PUBLIC_KEY` constant hardcoded in `app.js`.
 - See [README-DEPLOY.md](README-DEPLOY.md) and [workers/README-PUSH.md](workers/README-PUSH.md) for full step-by-step Cloudflare dashboard instructions.
 
 ## Conventions and preferences

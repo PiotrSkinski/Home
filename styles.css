@@ -4596,3 +4596,21 @@ body.is-modal-open {
 [hidden] {
   display: none !important;
 }
+
+/* ===================== Karta zadania bez kółka ===================== */
+/* Zadanie kończy się przesunięciem — kółko do odhaczania zniknęło z karty.
+   Karta traci jego kolumnę, inaczej treść wskoczyłaby w puste miejsce. */
+.task-card.bez-kolka {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (max-width: 720px) {
+  .task-card.bez-kolka {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Wcięcie 42 px wyrównywało przyciski do tekstu obok kółka */
+  .task-card.bez-kolka .task-actions {
+    padding-left: 0;
+  }
+}

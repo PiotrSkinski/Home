@@ -3,7 +3,7 @@ main = "push-reminders.js"
 compatibility_date = "2026-06-23"
 
 [triggers]
-crons = ["* * * * *"]
+crons = ["*/10 * * * *"]
 
 [vars]
 VAPID_PUBLIC_KEY = "BPH53rxNE0dFaDrfpaxuYpNFwzuJILXc1dkm0GGxm4sMgPJ3pSXad8OWI9mgTowjPrQlLS3e2X1NicEhsKKrJ-U"

@@ -1939,22 +1939,26 @@
   const SWIPE_THRESHOLD = 96;
   let swipe = null;
 
+  // Przesunięcie to teraz jedyna droga ukończenia zadania z listy, więc działa
+  // także przy „Ogranicz ruch” — karta jedzie tylko pod palcem, a samo
+  // completeTaskWithFlourish() pomija wtedy animacje.
   function handleSwipeStart(event) {
-    if (event.touches.length !== 1 || prefersReducedMotion()) {
+    if (event.touches.length !== 1) {
       return;
     }
 
     const card = event.target.closest(".task-card");
-    // Gest ma sens tylko tam, gdzie przycisk ukończenia jest aktywny — inaczej
-    // karta jechałaby na zielono, a completeTask() i tak by ją odrzucił.
-    const check = card?.querySelector("[data-action='complete-task']:not([disabled])");
-    if (!card || !check) {
+    // Gest ma sens tylko tam, gdzie ukończenie jest dozwolone — inaczej karta
+    // jechałaby na zielono, a completeTask() i tak by ją odrzucił. Wcześniej
+    // rozpoznawaliśmy to po aktywnym kółku w karcie; kółka już nie ma, a to
+    // samo mówi klasa is-swipeable nadawana wierszowi przy renderze.
+    if (!card || !card.closest(".task-row.is-swipeable") || !card.dataset.taskId) {
       return;
     }
 
     swipe = {
       card,
-      taskId: check.dataset.taskId,
+      taskId: card.dataset.taskId,
       startX: event.touches[0].clientX,
       startY: event.touches[0].clientY,
       dx: 0,
@@ -3642,12 +3646,9 @@
     return `
       <div class="task-row${completeDisabled ? "" : " is-swipeable"}">
       ${completeDisabled ? "" : `<span class="swipe-reveal" aria-hidden="true">Ukończone ✓</span>`}
-      <article class="task-card ${closed ? "is-done" : ""} ${isSkipped(task) ? "is-skipped" : ""} ${
+      <article class="task-card bez-kolka ${closed ? "is-done" : ""} ${isSkipped(task) ? "is-skipped" : ""} ${
       selectedTaskId === task.id ? "is-selected" : ""
-    }">
-        <button class="task-check" type="button" data-action="complete-task" data-task-id="${task.id}" ${
-      completeDisabled ? "disabled" : ""
-    } aria-label="Oznacz jako ukończone">✓</button>
+    }" data-task-id="${task.id}">
         <div>
           <h3 class="task-title">${escapeHtml(task.title)}</h3>
           <div class="task-meta">

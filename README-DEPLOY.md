@@ -25,7 +25,7 @@ Ustawienia projektu Pages:
 2. Plik `push-schema.sql` dodaje tabele do powiadomien i nie usuwa danych.
 3. W katalogu `workers/` jest osobny Worker `homejob-reminders`.
 4. Worker musi miec binding D1 o nazwie `DB` do tej samej bazy.
-5. Worker musi miec cron `* * * * *`.
+5. Worker musi miec cron `*/10 * * * *` (co 10 minut).
 6. Worker musi miec sekret `VAPID_PRIVATE_KEY`.
 7. Wartosci sekretu nie wrzucaj do GitHuba. Jest w pliku `outputs/homejob-vapid-private-key-v25.txt`.
 
@@ -41,7 +41,7 @@ Ustawienia projektu Pages:
    - `VAPID_PUBLIC_KEY` jako zwykla zmienna z wartoscia z `workers/wrangler.toml`
    - `VAPID_PRIVATE_KEY` jako sekret z pliku `outputs/homejob-vapid-private-key-v25.txt`
    - opcjonalnie `VAPID_SUBJECT`, np. `mailto:twoj-email@example.com`
-6. W `Triggers` -> `Cron Triggers` dodaj `* * * * *`.
+6. W `Triggers` -> `Cron Triggers` dodaj `*/10 * * * *`.
 7. Zapisz i zrob deploy Workera.
 
 Na iPhonie dodaj HomeJob do ekranu poczatkowego, otworz z ikony i kliknij `Powiadomienia`.
