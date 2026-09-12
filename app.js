@@ -459,6 +459,7 @@
         assigneeIds,
         createdById: task.createdById || nextState.users[0].id,
         dueDate: task.dueDate || todayIso(),
+        cycleDueDate: /^\d{4}-\d{2}-\d{2}$/.test(task.cycleDueDate || "") ? task.cycleDueDate : null,
         reminderTime: task.reminderTime || "18:00",
         assignedAt: task.assignedAt || task.createdAt || `${task.dueDate || todayIso()}T12:00:00.000Z`,
         priority: taskType === "shopping" ? "medium" : PRIORITY[task.priority] ? task.priority : "medium",
@@ -5297,6 +5298,10 @@
         editingTask.room = isShopping ? "Zakupy" : editingTask.room || "Inne";
         editingTask.assigneeIds = assigneeIds;
         editingTask.assigneeId = assigneeIds[0];
+        // Termin ustawiony ręcznie w edycji to nowy dzień w harmonogramie.
+        if (editingTask.dueDate !== dueDate || recurrenceType === "none") {
+          editingTask.cycleDueDate = null;
+        }
         editingTask.dueDate = dueDate;
         editingTask.reminderTime = reminderTime;
         editingTask.priority = priority;
@@ -5862,6 +5867,12 @@
 
   function applyPostponeToTask(task, request) {
     const previous = task.dueDate;
+    // Przełożenie przesuwa tylko to jedno wystąpienie. Zapamiętujemy dzień
+    // z harmonogramu (przy kolejnym przełożeniu zostaje ten pierwszy), żeby
+    // następne wystąpienie cyklu wróciło na swój dzień, np. na niedzielę.
+    if (task.recurrence.type !== "none" && !task.cycleDueDate) {
+      task.cycleDueDate = previous;
+    }
     task.dueDate = request.proposedDueDate;
     task.assignedAt = new Date().toISOString();
     task.lastNotifiedAt = null;
@@ -6135,8 +6146,14 @@
       .sort((a, b) => a.load - b.load)[0].user;
   }
 
+  // Rytm cyklu liczymy od dnia z harmonogramu — nie od terminu po przełożeniu
+  // i nie od dnia wykonania. Zadanie z niedzieli przełożone na poniedziałek
+  // wraca w następną niedzielę, zamiast przesunąć cały cykl o dzień.
   function createNextRecurringTask(task) {
-    const dueDate = getCaughtUpDueDate(getNextValidDueDate(task.dueDate, task.recurrence), task.recurrence);
+    const dueDate = getCaughtUpDueDate(
+      getNextValidDueDate(task.cycleDueDate || task.dueDate, task.recurrence),
+      task.recurrence
+    );
     const assigneeIds = task.recurrence.rotate
       ? Array.from(new Set(getAssigneeIds(task).map((id) => getNextAvailableUserId(id, dueDate))))
       : getAssigneeIds(task).slice();
@@ -6153,6 +6170,7 @@
       assigneeIds,
       assigneeId: assigneeIds[0],
       dueDate,
+      cycleDueDate: null,
       status: "open",
       assignedAt: new Date().toISOString(),
       completedAt: null,
@@ -7490,7 +7508,7 @@
       }
 
       const horizon = toISO(addDays(fromISO(task.dueDate), RECURRING_PROJECTION_DAYS));
-      let dueDate = task.dueDate;
+      let dueDate = task.cycleDueDate || task.dueDate;
       let assigneeIds = getAssigneeIds(task);
       let guard = 0;
 
@@ -7499,6 +7517,10 @@
         dueDate = getNextValidDueDate(dueDate, task.recurrence);
         if (dueDate > horizon || dueDate > rangeEndIso) {
           break;
+        }
+        // Po przełożeniu dni z harmonogramu przed nowym terminem już przepadły.
+        if (dueDate <= task.dueDate) {
+          continue;
         }
 
         assigneeIds = task.recurrence.rotate
