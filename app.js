@@ -472,10 +472,15 @@
           rotate: Boolean(task.recurrence?.rotate),
           skipWeekdays: normalizeSkipWeekdays(task.recurrence?.skipWeekdays)
         },
+        // Otwarte zwykłe zadanie zawsze jest warte tyle, ile jego priorytet —
+        // naprawia to też zadania, którym edycja zmieniła priorytet bez punktów.
+        // Zamknięte zachowują punkty z chwili zamknięcia.
         points:
           taskType === "shopping"
             ? getShoppingPotentialPoints(shoppingItems)
-            : Number.isFinite(Number(task.points))
+            : status === "open" && !task.isRewardTask && !task.holidaySkipped
+              ? (PRIORITY[task.priority] || PRIORITY.medium).points
+              : Number.isFinite(Number(task.points))
               ? Number(task.points)
               : PRIORITY[task.priority || "medium"].points,
         shoppingItems,
@@ -5314,7 +5319,11 @@
           skipWeekdays: recurrenceType === "none" ? [] : skipWeekdays
         };
         editingTask.shoppingItems = shoppingItems;
-        editingTask.points = getTaskPotentialPoints(editingTask);
+        // Punkty zwykłego zadania wynikają z priorytetu. getTaskPotentialPoints()
+        // oddaje już zapisane punkty, więc zmiana priorytetu w edycji nic nie
+        // zmieniała — liczymy je tu od nowa.
+        editingTask.points =
+          isShopping || editingTask.isRewardTask ? getTaskPotentialPoints(editingTask) : PRIORITY[priority].points;
         editingTask.assignedAt = reminderChanged ? new Date().toISOString() : editingTask.assignedAt;
         editingTask.lastNotifiedAt = reminderChanged ? null : editingTask.lastNotifiedAt;
         editingTask.history.push(historyEntry("Edytowano zadanie", state.currentUserId));
