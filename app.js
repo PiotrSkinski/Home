@@ -96,11 +96,15 @@
   // „Dziś” zależy od godziny startu doby: przy starcie o 2:00 zadanie
   // odhaczone o 1:30 wciąż należy do dnia poprzedniego.
   function todayIso() {
-    const now = new Date();
-    if (now.getHours() < getDayStartHour()) {
-      return toISO(addDays(now, -1));
+    return appDayIso(new Date());
+  }
+
+  // Dzień w rozumieniu domu: przed godziną startu dnia to jeszcze poprzedni.
+  function appDayIso(date) {
+    if (date.getHours() < getDayStartHour()) {
+      return toISO(addDays(date, -1));
     }
-    return toISO(now);
+    return toISO(date);
   }
 
   const MONTHLY_GOAL = 500;
@@ -150,6 +154,10 @@
   let searchQuery = "";
   let selectedTaskId = routeTaskId || pickInitialTaskId();
   let selectedDate = todayIso();
+  // iPhone trzyma aplikację w pamięci całymi dniami. Bez tego „dziś” z chwili
+  // uruchomienia zostawało w selectedDate i nazajutrz formularz „Dodaj”
+  // podpowiadał wczorajszy termin.
+  let dzienUruchomienia = selectedDate;
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
   let shoppingModalTaskId = null;
@@ -698,12 +706,48 @@
     const korektaChanged = zastosujKorekteSierpniowa();
     const urlopChanged = zamknijZadaniaZUrlopu();
     const duplikatyChanged = usunDuplikatyCykli();
+    const terminyChanged = naprawTerminyZPrzeszlosci();
     const carryoverChanged = processMonthlyCarryover();
     const bonusChanged = refreshHomeBonus();
     const claimsChanged = syncRewardClaims();
     const requestsChanged = expireStaleRequests();
     detectFreshRewardClaim();
-    return korektaChanged || urlopChanged || duplikatyChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
+    return korektaChanged || urlopChanged || duplikatyChanged || terminyChanged || carryoverChanged || bonusChanged || claimsChanged || requestsChanged;
+  }
+
+  // Formularz podpowiadał kiedyś termin z dnia uruchomienia aplikacji, więc
+  // dało się dodać zadanie „na wczoraj”, które od razu wisiało jako zaległe.
+  // Zadanie nie może mieć terminu sprzed dnia, w którym je dodano — takie
+  // przenosimy na dzień dodania. Wynik jest ten sam na każdym telefonie.
+  function naprawTerminyZPrzeszlosci() {
+    let changed = false;
+    state.tasks.forEach((task) => {
+      const utworzono = task.history?.[0];
+      if (task.status !== "open" || utworzono?.text !== "Utworzono zadanie") {
+        return;
+      }
+      const chwila = new Date(utworzono.createdAt || "");
+      if (Number.isNaN(chwila.getTime())) {
+        return;
+      }
+      const dzienDodania = appDayIso(chwila);
+      if (task.dueDate >= dzienDodania) {
+        return;
+      }
+      const poprzedni = task.dueDate;
+      task.dueDate = dzienDodania;
+      task.cycleDueDate = null;
+      // Wpis zostaje w historii na zawsze, więc bez „wczoraj/dziś”.
+      const data = (iso) => new Intl.DateTimeFormat("pl-PL", { day: "numeric", month: "long" }).format(fromISO(iso));
+      task.history.push(
+        historyEntry(
+          `Termin poprawiony: ${data(poprzedni)} → ${data(dzienDodania)} (zadanie dodano z datą, która już minęła)`,
+          task.createdById
+        )
+      );
+      changed = true;
+    });
+    return changed;
   }
 
   function expireStaleRequests() {
@@ -891,6 +935,18 @@
     if (document.visibilityState === "hidden") {
       flushPendingSync();
       return;
+    }
+
+    const dzis = todayIso();
+    if (dzis !== dzienUruchomienia) {
+      if (selectedDate < dzis) {
+        selectedDate = dzis;
+        calendarCursor = startOfMonth(fromISO(dzis));
+      }
+      dzienUruchomienia = dzis;
+      if (!activeModal) {
+        render();
+      }
     }
 
     refreshFromRemote();
@@ -4160,7 +4216,7 @@
     const isShopping = isShoppingTask(editingTask) || (!editingTask && taskModalKind === "shopping");
     const values = {
       title: editingTask?.title || (isShopping ? "Zakupy" : ""),
-      dueDate: editingTask?.dueDate || selectedDate || todayIso(),
+      dueDate: editingTask?.dueDate || (selectedDate > todayIso() ? selectedDate : todayIso()),
       reminderTime: editingTask?.reminderTime || "18:00",
       assigneeIds: editingTask ? getAssigneeIds(editingTask) : [state.currentUserId],
       priority: PRIORITY[editingTask?.priority] ? editingTask.priority : "medium",
@@ -4191,7 +4247,9 @@
               }
               <label>
                 <span class="label">Termin</span>
-                <input class="input" type="date" name="dueDate" value="${escapeAttribute(values.dueDate)}" required />
+                <input class="input" type="date" name="dueDate" value="${escapeAttribute(values.dueDate)}" min="${
+                  values.dueDate < todayIso() ? values.dueDate : todayIso()
+                }" required />
                 ${
                   isEditing
                     ? `<span class="form-hint">Termin można tu tylko przyspieszyć. Przesunięcie na później idzie przez „Przełóż” i głosowanie domu.</span>`
@@ -5282,6 +5340,11 @@
 
       if (isShopping && !shoppingItems.length) {
         toast("Dodaj produkty", "Wpisz przynajmniej jeden produkt do kupienia.");
+        return;
+      }
+
+      if (dueDate < todayIso() && (!editingTask || dueDate !== editingTask.dueDate)) {
+        toast("Ten dzień już minął", "Wybierz dzisiejszą albo późniejszą datę.");
         return;
       }
 
