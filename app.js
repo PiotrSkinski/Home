@@ -160,6 +160,11 @@
   let dzienUruchomienia = selectedDate;
   let calendarCursor = startOfMonth(new Date());
   let activeModal = null;
+  // Każda korona lidera dostaje własny gradient — przy powtórzonym id
+  // przeglądarka bierze pierwszą definicję, a ta może siedzieć w ukrytym
+  // widoku. Musi być tu, na górze: pierwszy render() rusza, zanim kod
+  // dojdzie do funkcji korony (dalsza deklaracja = biały ekran).
+  let koronaLicznik = 0;
   let shoppingModalTaskId = null;
   let rewardCelebration = null;
   let settingsPanel = null;
@@ -3195,6 +3200,7 @@
       .map((user) => ({ user, points: getUserPoints(user.id), week: getUserPoints(user.id, 7) }))
       .sort((a, b) => b.points - a.points)
       .slice(0, 4);
+    const liderId = getLeaderId();
 
     return `
       <div class="mini-ranking">
@@ -3203,7 +3209,7 @@
             (row, index) => `
               <div class="mini-rank-card">
                 <span class="rank-number">${index + 1}</span>
-                ${avatar(row.user)}
+                ${avatarWRankingu(row.user, liderId)}
                 <span class="rank-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <small>${row.week} pkt w 7 dni</small>
@@ -4438,6 +4444,7 @@
     const rows = state.users
       .map((user) => ({ user, points: getUserPoints(user.id), counts: getUserTaskCounts(user.id) }))
       .sort((a, b) => b.points - a.points);
+    const liderId = getLeaderId();
 
     return `
       <div class="leaderboard">
@@ -4445,7 +4452,7 @@
           .map(
             (row) => `
               <div class="leader-row">
-                ${avatar(row.user)}
+                ${avatarWRankingu(row.user, liderId)}
                 <div class="leader-person">
                   <strong>${escapeHtml(row.user.name)}</strong>
                   <span class="compact-meta">${row.counts.today} dziś · ${row.counts.week} w tygodniu · ${row.counts.month} w miesiącu</span>
@@ -7693,6 +7700,48 @@
       )}')" role="img" aria-label="${escapeAttribute(safeUser.name)}"></span>`;
     }
     return `<span class="avatar ${size}" style="background:${safeUser.color}">${escapeHtml(safeUser.avatar || safeUser.name.slice(0, 1))}</span>`;
+  }
+
+  // Korona dla lidera rankingu. Liczymy go raz, tymi samymi punktami co oba
+  // rankingi, żeby mini i pełny nigdy nie koronowały różnych osób. Remis na
+  // szczycie albo brak punktów = nikt nie prowadzi, więc nie ma korony.
+  function getLeaderId() {
+    const wyniki = state.users
+      .map((user) => ({ id: user.id, points: getUserPoints(user.id) }))
+      .sort((a, b) => b.points - a.points);
+    const [pierwszy, drugi] = wyniki;
+    if (!pierwszy || pierwszy.points <= 0 || (drugi && drugi.points === pierwszy.points)) {
+      return null;
+    }
+    return pierwszy.id;
+  }
+
+  function avatarLidera(user, size = "") {
+    const g = `korona-zloto-${(koronaLicznik += 1)}`;
+    return `
+      <span class="avatar-korona">
+        ${avatar(user, size)}
+        <svg class="korona" viewBox="0 0 30 21" role="img" aria-label="Lider rankingu">
+          <defs>
+            <linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#fff1a8" />
+              <stop offset="0.45" stop-color="#f7c33c" />
+              <stop offset="1" stop-color="#c88a0c" />
+            </linearGradient>
+          </defs>
+          <path d="M4.5 16.5 L2.5 7 L9.5 11.5 L15 3.6 L20.5 11.5 L27.5 7 L25.5 16.5 Z" fill="url(#${g})" stroke="#a66d05" stroke-width="1" stroke-linejoin="round" />
+          <rect x="4" y="15.6" width="22" height="4.2" rx="1.4" fill="url(#${g})" stroke="#a66d05" stroke-width="1" />
+          <circle cx="2.5" cy="6.6" r="1.75" fill="url(#${g})" stroke="#a66d05" stroke-width="0.8" />
+          <circle cx="15" cy="2.7" r="1.9" fill="url(#${g})" stroke="#a66d05" stroke-width="0.8" />
+          <circle cx="27.5" cy="6.6" r="1.75" fill="url(#${g})" stroke="#a66d05" stroke-width="0.8" />
+          <path d="M6.2 17.2 H23.8" stroke="#fff6c9" stroke-width="0.9" stroke-linecap="round" opacity="0.85" />
+        </svg>
+      </span>
+    `;
+  }
+
+  function avatarWRankingu(user, liderId, size = "") {
+    return user.id === liderId ? avatarLidera(user, size) : avatar(user, size);
   }
 
   function toast(title, message) {
