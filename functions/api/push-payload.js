@@ -1,3 +1,7 @@
+// Worker ponawia nieudaną wysyłkę w kolejnych przebiegach (co 10 min, do 3
+// prób), więc push może przyjść do ~20 min po utworzeniu wiadomości.
+const RECENT_WINDOW_MINUTES = 30;
+
 const responseHeaders = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store"
@@ -22,86 +26,112 @@ export async function onRequestPost({ request, env }) {
     return json({ messages: [] });
   }
 
+  // Jeden push = jedno powiadomienie. Wcześniej każdy push pobierał WSZYSTKIE
+  // oczekujące wiadomości. Gdy worker wysłał w jednym przebiegu dwie (dwa
+  // zadania o 18:00, przypomnienie + „nowe zadanie”), telefon dostawał dwa
+  // pushe, oba pytały tu jednocześnie, oba widziały tę samą listę, zanim
+  // którykolwiek zdążył ją oznaczyć — i każda wiadomość wyskakiwała dwa razy.
+  // Teraz każdy push przejmuje dokładnie jedną wiadomość, a przejęcie jest
+  // warunkowe (delivered_at IS NULL), więc dwa równoległe pushe nigdy nie
+  // dostaną tej samej.
+  const now = Date.now();
+  const deliveredAt = new Date(now).toISOString();
+  const recentCutoff = new Date(now - RECENT_WINDOW_MINUTES * 60 * 1000).toISOString();
+
+  // Wiadomość starsza niż okno ponowień i tak nie ma już swojego pusha
+  // w drodze. Skoro ten telefon odbiera, zamykamy ją bez pokazywania —
+  // inaczej wyskoczyłaby z opóźnieniem przy jakimś zupełnie innym pushu.
+  await db
+    .prepare(
+      `UPDATE push_messages SET delivered_at = ?1
+       WHERE subscription_id = ?2 AND delivered_at IS NULL AND created_at < ?3`
+    )
+    .bind(deliveredAt, subscription.id, recentCutoff)
+    .run();
+
   const result = await db
     .prepare(
       `SELECT id, household_id, title, body, url, tag, task_id, kind, created_at
        FROM push_messages
        WHERE subscription_id = ?1 AND delivered_at IS NULL
-       ORDER BY created_at ASC
+       ORDER BY created_at DESC
        LIMIT 6`
     )
     .bind(subscription.id)
     .all();
 
-  const messages = result.results || [];
-  const deliveredAt = new Date().toISOString();
-
-  // A reminder can be queued before its task gets completed, skipped ("nie ma
-  // potrzeby") or deleted. Consume those rows without handing them to the
-  // device, so a closed task never produces a notification. If this check ever
-  // fails, deliver the messages as-is: a stale reminder beats replacing every
-  // notification with the service worker's contentless fallback.
-  let staleIds = new Set();
-  try {
-    staleIds = await findStaleMessageIds(db, messages);
-  } catch (error) {
-    staleIds = new Set();
-  }
-
-  for (const message of messages) {
-    await db
-      .prepare("UPDATE push_messages SET delivered_at = ?1 WHERE id = ?2")
+  const stateCache = new Map();
+  for (const message of result.results || []) {
+    const claim = await db
+      .prepare("UPDATE push_messages SET delivered_at = ?1 WHERE id = ?2 AND delivered_at IS NULL")
       .bind(deliveredAt, message.id)
       .run();
-  }
-
-  return json({
-    messages: messages
-      .filter((message) => !staleIds.has(message.id))
-      .map((message) => ({
-        id: message.id,
-        title: message.title,
-        body: message.body,
-        url: message.url,
-        tag: message.tag,
-        taskId: message.task_id,
-        kind: message.kind,
-        createdAt: message.created_at
-      }))
-  });
-}
-
-async function findStaleMessageIds(db, messages) {
-  const stale = new Set();
-  const taskMessages = messages.filter((message) => message.task_id && message.household_id);
-  if (!taskMessages.length) {
-    return stale;
-  }
-
-  const stateByHousehold = new Map();
-  for (const householdId of new Set(taskMessages.map((message) => message.household_id))) {
-    try {
-      const row = await db.prepare("SELECT value FROM households WHERE id = ?1").bind(householdId).first();
-      if (row) {
-        stateByHousehold.set(householdId, JSON.parse(row.value));
-      }
-    } catch (error) {
-      // Unreadable state: leave the messages alone rather than dropping them.
-    }
-  }
-
-  for (const message of taskMessages) {
-    const state = stateByHousehold.get(message.household_id);
-    if (!state) {
+    // Inny, równoległy push był szybszy — ta wiadomość jest już jego.
+    // (Gdyby baza nie zwróciła licznika zmian, zachowujemy się jak dawniej.)
+    const changes = claim?.meta?.changes;
+    if (typeof changes === "number" && changes < 1) {
       continue;
     }
-    const task = (state.tasks || []).find((item) => item.id === message.task_id);
-    if (!task || task.status !== "open") {
-      stale.add(message.id);
+
+    // Przypomnienie mogło zostać wysłane tuż przed ukończeniem zadania albo
+    // „nie ma potrzeby”. Takie przejmujemy po cichu i bierzemy następną.
+    // Gdy sprawdzenie się nie uda, pokazujemy wiadomość jak jest.
+    let stale = false;
+    try {
+      stale = await isStaleMessage(db, message, stateCache);
+    } catch (_error) {
+      stale = false;
     }
+    if (stale) {
+      continue;
+    }
+
+    return json({
+      messages: [
+        {
+          id: message.id,
+          title: message.title,
+          body: message.body,
+          url: message.url,
+          tag: message.tag,
+          taskId: message.task_id,
+          kind: message.kind,
+          createdAt: message.created_at
+        }
+      ]
+    });
   }
 
-  return stale;
+  return json({ messages: [] });
+}
+
+// Okrojona kopia domu (slim_value) trzyma tylko otwarte zadania, więc brak
+// zadania w niej = zadanie zamknięte albo usunięte. Czytamy ją zamiast pełnego
+// zapisu, bo ten ma setki kB i jego parsowanie zjada limit procesora.
+async function isStaleMessage(db, message, stateCache) {
+  if (!message.task_id || !message.household_id) {
+    return false;
+  }
+
+  if (!stateCache.has(message.household_id)) {
+    let row = null;
+    try {
+      row = await db
+        .prepare("SELECT COALESCE(slim_value, value) AS value FROM households WHERE id = ?1")
+        .bind(message.household_id)
+        .first();
+    } catch (_error) {
+      row = await db.prepare("SELECT value FROM households WHERE id = ?1").bind(message.household_id).first();
+    }
+    stateCache.set(message.household_id, row ? JSON.parse(row.value) : null);
+  }
+
+  const state = stateCache.get(message.household_id);
+  if (!state) {
+    return false;
+  }
+  const task = (state.tasks || []).find((item) => item.id === message.task_id);
+  return !task || task.status !== "open";
 }
 
 export function onRequestOptions() {

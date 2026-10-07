@@ -776,6 +776,7 @@
       }
 
       notifyUsers([request.requestedById], {
+        stalyId: `notification-wygasl-${request.id}`,
         title: "Wniosek wygasł",
         body: `Dom nie dogłosował w ciągu ${REQUEST_EXPIRY_DAYS} dni. „${request.taskTitle}” zostaje bez zmian.`,
         taskId: request.taskId,
@@ -5616,15 +5617,22 @@
     return Math.max(0, MONTHLY_POSTPONE_LIMIT - getUsedPostponeCount(userId));
   }
 
-  function notifyUsers(userIds, { title, body, taskId = null, push = false, kind = null }) {
+  // stalyId: dla powiadomień, które aplikacja tworzy sama (bez kliknięcia),
+  // każdy telefon liczy je osobno. Z losowym id oba wpisy przeżywały scalanie
+  // i worker wysyłał push dwa razy — ze stałym scalają się w jeden.
+  function notifyUsers(userIds, { title, body, taskId = null, push = false, kind = null, stalyId = null }) {
     Array.from(new Set(userIds))
       .filter((id) => id && getUserById(id))
       .forEach((id) => {
+        const notificationId = stalyId ? `${stalyId}-${id}` : uid("notification");
+        if (stalyId && state.notifications.some((item) => item.id === notificationId)) {
+          return;
+        }
         // Powiadomienie w aplikacji zostaje zawsze; wyłączony przełącznik
         // gasi wyłącznie wysyłkę na telefon.
         const pushDlaNiego = push && (!kind || getPushPref(id, kind));
         state.notifications.unshift({
-          id: uid("notification"),
+          id: notificationId,
           taskId,
           title,
           body,
@@ -6435,7 +6443,11 @@
       });
 
       task.lastNotifiedAt = new Date().toISOString();
-      if (!isWebPushEnabled()) {
+      // Tam, gdzie działa push, przypomnienie wysyła worker. Wcześniej
+      // decydowała własna flaga w localStorage — po reinstalacji jej nie było,
+      // więc otwarta aplikacja pokazywała swoje powiadomienie, a chwilę później
+      // przychodził to samo push.
+      if (!("PushManager" in window)) {
         showSystemNotification(title, body, task.id);
       }
     });
@@ -6503,10 +6515,6 @@
     } catch (error) {
       console.warn("Nie udało się pokazać powiadomienia", error);
     }
-  }
-
-  function isWebPushEnabled() {
-    return localStorage.getItem(WEB_PUSH_ENABLED_KEY) === "true";
   }
 
   function urlBase64ToUint8Array(value) {
@@ -6982,7 +6990,7 @@
       state.household.homeBonus = currentPeriod;
       state.users.forEach((user) => {
         state.notifications.unshift({
-          id: uid("notification"),
+          id: `notification-bonus-${currentPeriod}-${user.id}`,
           taskId: null,
           kind: "bonus",
           push: getPushPref(user.id, "rewards"),
@@ -7349,10 +7357,15 @@
           return;
         }
 
+        // Próg może przekroczyć się na obu telefonach, zanim się zsynchronizują.
+        // Stałe identyfikatory sprawiają, że scalanie skleja to w jedną
+        // nagrodę, jedno zadanie i jedno powiadomienie.
+        const kluczNagrody = `${user.id}-${currentPeriod}-${threshold.points}`;
         const task = createRewardTask(user, rewardAssignee, threshold);
+        task.id = `task-reward-${kluczNagrody}`;
 
         state.rewardClaims.unshift({
-          id: uid("reward"),
+          id: `reward-${kluczNagrody}`,
           userId: user.id,
           threshold: threshold.points,
           label: threshold.label,
@@ -7365,7 +7378,7 @@
 
         state.tasks.unshift(task);
         state.notifications.unshift({
-          id: uid("notification"),
+          id: `notification-reward-${kluczNagrody}`,
           taskId: task.id,
           kind: "reward",
           push: getPushPref(rewardAssignee.id, "rewards"),
