@@ -4638,3 +4638,18 @@ body.is-modal-open {
   filter: drop-shadow(0 2px 2px rgba(120, 78, 6, 0.35));
   pointer-events: none;
 }
+
+/* ===================== Lista zadań: lżejsze wejście ===================== */
+/* Animacja wejścia daje każdemu animowanemu elementowi osobną warstwę
+   graficzną. Przy setkach kart i tysiącach plakietek iPhone kończył pamięć
+   i Safari zamykał stronę („Wielokrotnie wystąpił problem…”). Animujemy
+   tylko pierwsze karty — reszta i tak jest poniżej ekranu. */
+.main.is-entering .task-row:nth-child(n + 7),
+.main.is-entering .task-row:nth-child(n + 7) .pill {
+  animation: none;
+}
+
+.lista-wiecej {
+  width: 100%;
+  margin-top: 12px;
+}

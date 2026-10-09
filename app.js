@@ -152,6 +152,14 @@
   let activeView = routeTaskId ? "task-detail" : "dashboard";
   let activeFilter = "all";
   let searchQuery = "";
+  // Lista zadań rośnie z każdym ukończonym zadaniem. Renderowanie wszystkich
+  // naraz (setki kart z animacją wejścia) wywracało Safari na iPhonie przy
+  // wejściu w „Lista”. Pokazujemy porcjami.
+  const LISTA_KROK = 40;
+  let listaLimit = LISTA_KROK;
+  // Zdjęcia awatarów żyją w jednym arkuszu stylów zamiast w każdej karcie —
+  // patrz odswiezStylAwatarow().
+  let ostatniStylAwatarow = null;
   let selectedTaskId = routeTaskId || pickInitialTaskId();
   let selectedDate = todayIso();
   // iPhone trzyma aplikację w pamięci całymi dniami. Bez tego „dziś” z chwili
@@ -1391,6 +1399,10 @@
     // jakby karta skakała, zanim się ustatkuje.
     const zmianaKarty = ostatniaKarta !== null && activeView !== ostatniaKarta;
     const isEntering = ostatniaKarta === null || zmianaKarty;
+    if (zmianaKarty) {
+      listaLimit = LISTA_KROK;
+    }
+    odswiezStylAwatarow();
 
     // Zmiana karty ma zaczynać się od góry.
     if (zmianaKarty && !activeModal) {
@@ -3248,7 +3260,14 @@
         <section class="section-block">
           <input class="input" data-action="search" value="${escapeAttribute(searchQuery)}" placeholder="Szukaj po nazwie lub pomieszczeniu" />
           <div style="height: 12px"></div>
-          ${renderTaskList(tasks, "Brak zadań", "Zmień filtr albo dodaj nowe zadanie.")}
+          ${renderTaskList(tasks.slice(0, listaLimit), "Brak zadań", "Zmień filtr albo dodaj nowe zadanie.")}
+          ${
+            tasks.length > listaLimit
+              ? `<button class="ghost-button lista-wiecej" type="button" data-action="lista-wiecej">Pokaż więcej (jeszcze ${
+                  tasks.length - listaLimit
+                })</button>`
+              : ""
+          }
         </section>
       </section>
     `;
@@ -4640,7 +4659,14 @@
     if (action === "filter" || action === "quick-filter") {
       activeView = "tasks";
       activeFilter = actionElement.dataset.filter;
+      listaLimit = LISTA_KROK;
       moreMenuOpen = false;
+      render();
+      return;
+    }
+
+    if (action === "lista-wiecej") {
+      listaLimit += LISTA_KROK;
       render();
       return;
     }
@@ -5149,6 +5175,7 @@
   function handleInput(event) {
     if (event.target.matches("[data-action='search']")) {
       searchQuery = event.target.value;
+      listaLimit = LISTA_KROK;
       render();
     }
 
@@ -6574,7 +6601,12 @@
       );
     }
 
-    return sortTasks(tasks);
+    // Otwarte po terminie, zamknięte od ostatnio ukończonych. Wcześniej
+    // zamknięte też szły po terminie, więc pod otwartymi czekały najpierw
+    // zadania z czerwca.
+    const otwarte = tasks.filter((task) => task.status === "open");
+    const zamkniete = tasks.filter((task) => task.status !== "open");
+    return [...sortTasks(otwarte), ...sortByCompletedDesc(zamkniete)];
   }
 
   // sortTasks porządkuje po terminie, co przy liście ukończonych wypychało
@@ -7707,10 +7739,10 @@
 
   function avatar(user, size = "") {
     const safeUser = user || state.users[0];
-    if (safeUser.photo) {
-      return `<span class="avatar ${size} has-photo" style="background-image:url('${escapeAttribute(
-        safeUser.photo
-      )}')" role="img" aria-label="${escapeAttribute(safeUser.name)}"></span>`;
+    if (safeUser.photo && bezpieczneZdjecie(safeUser.photo)) {
+      return `<span class="avatar ${size} has-photo" data-foto="${escapeAttribute(
+        safeUser.id
+      )}" role="img" aria-label="${escapeAttribute(safeUser.name)}"></span>`;
     }
     return `<span class="avatar ${size}" style="background:${safeUser.color}">${escapeHtml(safeUser.avatar || safeUser.name.slice(0, 1))}</span>`;
   }
@@ -7727,6 +7759,31 @@
       return null;
     }
     return pierwszy.id;
+  }
+
+  // Zdjęcie awatara (~20 kB tekstu) było wklejane w każdą kartę z osobna —
+  // przy setkach zadań to megabajty HTML przy każdym renderze. Teraz każde
+  // zdjęcie siedzi raz w arkuszu stylów, a karty tylko się do niego odwołują.
+  function bezpieczneZdjecie(photo) {
+    return /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo);
+  }
+
+  function odswiezStylAwatarow() {
+    const css = state.users
+      .filter((user) => user.photo && bezpieczneZdjecie(user.photo))
+      .map((user) => `.avatar.has-photo[data-foto="${CSS.escape(user.id)}"]{background-image:url("${user.photo}")}`)
+      .join("\n");
+    if (css === ostatniStylAwatarow) {
+      return;
+    }
+    ostatniStylAwatarow = css;
+    let arkusz = document.getElementById("avatar-photos");
+    if (!arkusz) {
+      arkusz = document.createElement("style");
+      arkusz.id = "avatar-photos";
+      document.head.appendChild(arkusz);
+    }
+    arkusz.textContent = css;
   }
 
   function avatarLidera(user, size = "") {
